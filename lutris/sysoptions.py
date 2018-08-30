@@ -45,6 +45,15 @@ def get_dri_prime():
     return len(display.get_providers()) > 1
 
 
+def get_optirun_choices():
+    choices = [('Off', 'off')]
+    if system.find_executable('primusrun'):
+        choices.append(('primusrun', 'primusrun'))
+    if system.find_executable('optirun'):
+        choices.append(('optirun/virtualgl', 'optirun'))
+    return choices
+
+
 system_options = [
     {
         'option': 'game_path',
@@ -74,15 +83,16 @@ system_options = [
                  "your display too bright. Select this option to correct it.")
     },
     {
-        'option': 'primusrun',
-        'type': 'bool',
-        'default': False,
-        'condition': system.find_executable('primusrun'),
-        'label': 'Use primusrun (NVIDIA Optimus laptops)',
-        'help': ("If you have installed the primus package, selecting this "
-                 "option will run the game with the primusrun command, "
+        'option': 'optimus',
+        'type': 'choice',
+        'default': 'off',
+        'choices': get_optirun_choices,
+        'label': 'Optimus launcher (NVIDIA Optimus laptops)',
+        'help': ("If you have installed the primus or bumblebee packages, "
+                 "select what launcher will run the game with the command, "
                  "activating your NVIDIA graphic chip for high 3D "
-                 "performance.")
+                 "performance. primusrun normally has better performance, but"
+                 "optirun/virtualgl works better for more games.")
     },
     {
         'option': 'dri_prime',
@@ -101,8 +111,9 @@ system_options = [
         'label': 'Fullscreen SDL games to display',
         'choices': get_output_list,
         'default': 'off',
-        'help': ("Hint SDL games to use a specific monitor when going fullscreen by "
-                 "setting the SDL_VIDEO_FULLSCREEN environment variable")
+        'help': ("Hint SDL games to use a specific monitor when going "
+                 "fullscreen by setting the SDL_VIDEO_FULLSCREEN "
+                 "environment variable")
     },
     {
         'option': 'display',
@@ -198,12 +209,31 @@ system_options = [
                  "Check this option to disable it.")
     },
     {
+        'option': 'prefer_system_libs',
+        'type': 'bool',
+        'label': 'Prefer system libraries',
+        'default': True,
+        'advanced': True,
+        'help': ('When the runtime is enabled, prioritize the system libraries'
+                 ' over the provided ones.')
+    },
+    {
         'option': 'disable_monitoring',
         'label': "Disable process monitor",
         'type': 'bool',
         'default': False,
         'advanced': True,
-        'help': "Disables process monitoring of games, Lutris won't detect when game quits."
+        'help': ("Disables process monitoring of games, "
+                 "Lutris won't detect when game quits.")
+    },
+    {
+        'option': 'disable_compositor',
+        'label': "Disable desktop effects",
+        'type': 'bool',
+        'default': False,
+        'advanced': True,
+        'help': ("Disable desktop effects while game is running, "
+                 "reducing stuttering and increasing performance")
     },
     {
         'option': 'reset_pulse',
@@ -221,8 +251,8 @@ system_options = [
         'default': False,
         'advanced': True,
         'condition': system.find_executable('pulseaudio'),
-        'help': ('Set the environment variable PULSE_LATENCY_MSEC=60 to improve '
-                 'audio quality on some games')
+        'help': ('Set the environment variable PULSE_LATENCY_MSEC=60 '
+                 'to improve audio quality on some games')
     },
     {
         'option': 'use_us_layout',
@@ -260,13 +290,13 @@ system_options = [
     },
     {
         'option': 'xephyr',
-        'type': 'choice',
         'label': "Use Xephyr",
         'type': 'choice',
         'choices': (
             ('Off', 'off'),
             ('8BPP (256 colors)', '8bpp'),
-            ('16BPP (65536 colors)', '16bpp')
+            ('16BPP (65536 colors)', '16bpp'),
+            ('24BPP (16M colors)', '24bpp'),
         ),
         'default': 'off',
         'advanced': True,

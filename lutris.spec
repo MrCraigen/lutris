@@ -4,7 +4,7 @@
 %{!?py3_install: %global py3_install %{__python3} setup.py install --skip-build --root %{buildroot}}
 
 Name:           lutris
-Version:        0.4.16
+Version:        0.4.19
 Release:        2%{?dist}
 Summary:        Install and play any video game easily
 
@@ -36,12 +36,8 @@ BuildRequires:  update-desktop-files
 BuildRequires:  hicolor-icon-theme
 BuildRequires:  polkit
 BuildRequires:  python3-setuptools
-Requires:       python3-gobject, python3-PyYAML, cabextract
-%endif
-
-# Add Gdk dependency for Tumbleweed (package unavailable for other releases)
-%if 0%{?suse_version} > 1500
-Requires: python3-gobject-Gdk
+Requires:       (python3-gobject-Gdk or python3-gobject)
+Requires:       python3-PyYAML, cabextract
 %endif
 
 %if 0%{?fedora} || 0%{?suse_version}

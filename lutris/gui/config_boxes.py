@@ -138,12 +138,17 @@ class ConfigBox(VBox):
             self.generate_combobox(option_key,
                                    option["choices"],
                                    option["label"],
-                                   value, default)
+                                   value,
+                                   default)
+
         elif option_type == 'choice_with_entry':
             self.generate_combobox(option_key,
                                    option["choices"],
                                    option["label"],
-                                   value, default, has_entry=True)
+                                   value,
+                                   default,
+                                   has_entry=True)
+
         elif option_type == 'bool':
             self.generate_checkbox(option, value)
             self.tooltip_default = 'Enabled' if default else 'Disabled'
@@ -229,7 +234,7 @@ class ConfigBox(VBox):
         # With entry ("choice_with_entry" type)
         if has_entry:
             combobox = Gtk.ComboBox.new_with_model_and_entry(liststore)
-            combobox.set_entry_text_column(1)
+            combobox.set_entry_text_column(0)
             if value:
                 combobox.get_child().set_text(value)
         # No entry ("choice" type)
@@ -247,12 +252,19 @@ class ConfigBox(VBox):
                 combobox.set_active_id(default)
 
         combobox.connect('changed', self.on_combobox_change, option_name)
+        combobox.connect('scroll-event', self.on_combobox_scroll)
         label = Label(label)
         label.set_alignment(0.5, 0.5)
         combobox.set_valign(Gtk.Align.CENTER)
         self.wrapper.pack_start(label, False, False, 0)
         self.wrapper.pack_start(combobox, True, True, 0)
         self.option_widget = combobox
+
+    def on_combobox_scroll(self, combobox, event):
+        """Do not change options when scrolling
+        with cursor inside a ComboBox."""
+        combobox.stop_emission_by_name('scroll-event')
+        return False
 
     def on_combobox_change(self, combobox, option):
         """Action triggered on combobox 'changed' signal."""

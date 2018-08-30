@@ -53,6 +53,8 @@ class Game(object):
 
         self.load_config()
         self.resolution_changed = False
+        self.compositor_disabled = False
+        self.stop_compositor = self.start_compositor = ""
         self.original_outputs = None
         self.log_buffer = Gtk.TextBuffer()
         self.log_buffer.create_tag("warning", foreground="red")
@@ -109,6 +111,24 @@ class Game(object):
                          self.runner_name, self.slug)
         else:
             self.runner = runner_class(self.config)
+
+    def desktop_effects(self, enable):
+        if enable:
+            system.execute(self.start_compositor, shell=True)
+        else:
+            if os.environ.get('DESKTOP_SESSION') == "plasma":
+                self.stop_compositor = "qdbus org.kde.KWin /Compositor org.kde.kwin.Compositing.suspend"
+                self.start_compositor = "qdbus org.kde.KWin /Compositor org.kde.kwin.Compositing.resume"
+            elif os.environ.get('DESKTOP_SESSION') == "mate" and system.execute("gsettings get org.mate.Marco.general compositing-manager", shell=True) == 'true':
+                self.stop_compositor = "gsettings set org.mate.Marco.general compositing-manager false"
+                self.start_compositor = "gsettings set org.mate.Marco.general compositing-manager true"
+            elif os.environ.get('DESKTOP_SESSION') == "xfce" and system.execute("xfconf-query --channel=xfwm4 --property=/general/use_compositing", shell=True) == 'true':
+                self.stop_compositor = "xfconf-query --channel=xfwm4 --property=/general/use_compositing --set=false"
+                self.start_compositor = "xfconf-query --channel=xfwm4 --property=/general/use_compositing --set=true"
+
+            if not (self.compositor_disabled or self.stop_compositor == ""):
+                system.execute(self.stop_compositor, shell=True)
+                self.compositor_disabled = True;
 
     def remove(self, from_library=False, from_disk=False):
         if from_disk and self.runner:
@@ -241,9 +261,13 @@ class Game(object):
         # Command
         launch_arguments = gameplay_info['command']
 
-        primusrun = system_config.get('primusrun')
-        if primusrun and system.find_executable('primusrun'):
+        optimus = system_config.get('optimus')
+        if optimus == 'primusrun' and system.find_executable('primusrun'):
             launch_arguments.insert(0, 'primusrun')
+        elif optimus == 'optirun' and system.find_executable('optirun'):
+            launch_arguments.insert(0, 'virtualgl')
+            launch_arguments.insert(0, '-b')
+            launch_arguments.insert(0, 'optirun')
 
         xephyr = system_config.get('xephyr') or 'off'
         if xephyr != 'off':
@@ -316,7 +340,12 @@ class Game(object):
         exclude_processes = shlex.split(system_config.get('exclude_processes', ''))
 
         monitoring_disabled = system_config.get('disable_monitoring')
+        if monitoring_disabled:
+            show_obnoxious_process_monitor_message()
         process_watch = not monitoring_disabled
+
+        if self.runner.system_config.get('disable_compositor'):
+            self.desktop_effects(False)
 
         self.game_thread = LutrisThread(launch_arguments,
                                         runner=self.runner,
@@ -401,6 +430,9 @@ class Game(object):
            or self.runner.system_config.get('reset_desktop'):
             display.change_resolution(self.original_outputs)
 
+        if self.compositor_disabled:
+            self.desktop_effects(True)
+
         if self.runner.system_config.get('use_us_layout'):
             subprocess.Popen(['setxkbmap'], env=os.environ).communicate()
 
@@ -431,9 +463,29 @@ class Game(object):
                                     "already using the same Wine prefix.</b>")
 
     def notify_steam_game_changed(self, appmanifest):
-        logger.debug("Steam game %s state has changed, new states: %s",
-                     appmanifest.steamid, ', '.join(appmanifest.states))
-        if 'Fully Installed' in appmanifest.states:
+        """Receive updates from Steam games and set the thread's ready state accordingly"""
+        if 'Fully Installed' in appmanifest.states and not self.game_thread.ready_state:
+            logger.info("Steam game %s is fully installed", appmanifest.steamid)
             self.game_thread.ready_state = True
-        elif 'Update Required' in appmanifest.states:
+        elif 'Update Required' in appmanifest.states and self.game_thread.ready_state:
+            logger.info("Steam game %s updating, setting game thread as not ready",
+                        appmanifest.steamid)
             self.game_thread.ready_state = False
+
+
+def show_obnoxious_process_monitor_message():
+    """Display an annoying message for people who disable the process monitor"""
+    for _ in range(5):
+        logger.critical("")
+    logger.critical("   ****************************************************")
+    logger.critical("   ****************************************************")
+    logger.critical("   ***  YOU HAVE THE PROCESS MONITOR DISABLED!!!!!  ***")
+    logger.critical("   ****************************************************")
+    logger.critical("   ****************************************************")
+    logger.critical("THIS OPTION WAS IMPLEMENTED AS A WORKAROUND FOR A BUG THAT HAS BEEN FIXED!!11!!1")
+    logger.critical("RUNNING GAMES WITH THE PROCESS MONITOR DISABLED IS NOT SUPPORTED!!!")
+    logger.critical("YOU ARE DISCOURAGED FROM REPORTING ISSUES WITH THE PROCESS MONITOR DISABLED!!!")
+    logger.critical("THIS OPTION WILL BE REMOVED IN A FUTURE RELEASE!!!!!!!")
+    logger.critical("IF YOU THINK THIS OPTION CAN BE USEFUL FOR ANY MEANS PLEASE LET US KNOW!!!!")
+    for _ in range(5):
+        logger.critical("")

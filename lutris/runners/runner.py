@@ -150,24 +150,20 @@ class Runner:
         return os.path.join(settings.RUNNER_DIR, self.runner_executable)
 
     def get_env(self, os_env=False):
+        """Return environment variables used for a game."""
         env = {}
-
         if os_env:
             env.update(os.environ.copy())
 
         system_env = self.system_config.get('env') or {}
         env.update(system_env)
 
-        dri_prime = self.system_config.get('dri_prime')
-        if dri_prime:
-            env["DRI_PRIME"] = "1"
-        else:
-            env["DRI_PRIME"] = "0"
+        env["DRI_PRIME"] = "1" if self.system_config.get('dri_prime') else "0"
 
         runtime_ld_library_path = None
 
         if self.use_runtime():
-            runtime_env = runtime.get_env()
+            runtime_env = self.get_runtime_env()
             if 'STEAM_RUNTIME' in runtime_env and 'STEAM_RUNTIME' not in env:
                 env['STEAM_RUNTIME'] = runtime_env['STEAM_RUNTIME']
             if 'LD_LIBRARY_PATH' in runtime_env:
@@ -177,10 +173,23 @@ class Runner:
             ld_library_path = env.get("LD_LIBRARY_PATH")
             if not ld_library_path:
                 ld_library_path = '$LD_LIBRARY_PATH'
-            ld_library_path = ":".join([runtime_ld_library_path, ld_library_path])
-            env["LD_LIBRARY_PATH"] = ld_library_path
+            env["LD_LIBRARY_PATH"] = ":".join([runtime_ld_library_path, ld_library_path])
 
         return env
+
+    def get_runtime_env(self):
+        """Return runtime environment variables.
+
+        This method may be overridden in runner classes.
+        (Notably for Lutris wine builds)
+
+        Returns:
+            dict
+
+        """
+        return runtime.get_env(
+            self.system_config.get('prefer_system_libs', True)
+        )
 
     def play(self):
         """Dummy method, must be implemented by derived runnners."""
@@ -208,15 +217,20 @@ class Runner:
         command = command_data.get('command')
         env = (command_data.get('env') or {}).copy()
 
+        if hasattr(self, 'prelaunch'):
+            self.prelaunch()
+
         thread = LutrisThread(command, runner=self, env=env, watch=False)
         thread.start()
 
     def use_runtime(self):
-        disable_runtime = self.system_config.get('disable_runtime')
-        disable_runtime_by_env = runtime.RUNTIME_DISABLED
-        if disable_runtime_by_env is True:
-            disable_runtime = disable_runtime_by_env
-        return not disable_runtime
+        if runtime.RUNTIME_DISABLED:
+            logger.info("Runtime disabled by environment")
+            return False
+        if self.system_config.get('disable_runtime'):
+            logger.info("Runtime disabled by system configuration")
+            return False
+        return True
 
     def install_dialog(self):
         """Ask the user if she wants to install the runner.
@@ -274,9 +288,9 @@ class Runner:
                 ]
                 if default_version:
                     return default_version[0]
-            elif len(versions) == 1 and system.is_64bit:
+            elif len(versions) == 1 and system.IS_64BIT:
                 return versions[0]
-            elif len(versions) > 1 and system.is_64bit:
+            elif len(versions) > 1 and system.IS_64BIT:
                 default_version = [
                     v for v in versions
                     if v['default'] is True

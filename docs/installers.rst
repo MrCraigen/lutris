@@ -26,10 +26,10 @@ Examples:
 ::
 
     files:
-    - file1: http://site.com/gamesetup.exe
+    - file1: https://example.com/gamesetup.exe
     - file2: "N/A:Select the game's setup file"
     - file3:
-        url: http://site.com/url-that-doesnt-resolve-to-a-proper-filename
+        url: https://example.com/url-that-doesnt-resolve-to-a-proper-filename
         filename: actual_local_filename.zip
         referer: www.mywebsite.com
 
@@ -127,10 +127,13 @@ Requiring additional binaries
 
 If the game or the installer needs some system binaries to run, you can specify
 them in the `require-binaries` directive. The value is a comma-separated list
-of required binaries (acting as AND), if one of several binaries are able to 
+of required binaries (acting as AND), if one of several binaries are able to
 run the program, you can add them as a ``|`` separated list (acting as OR).
 
-Example::
+Example
+
+::
+
     # This requires cmake to be installed and either ggc or clang
     require-binaries: cmake, gcc | clang
 
@@ -351,6 +354,7 @@ Example:
             Enabled: 'false'
 
 This writes (or updates) a file with the following content:
+
 ::
 
     {
@@ -374,8 +378,18 @@ Currently, the following tasks are implemented:
 *   wine / winesteam: ``create_prefix`` Creates an empty Wine prefix at the
     specified path. The other wine/winesteam directives below include the
     creation of the prefix, so in most cases you won't need to use the
-    create_prefix command. Parameters are ``prefix`` (the path), ``arch``
-    (optional architecture of the prefix, default: win32), ``overrides`` (optional dll overrides, format described later), ``install_gecko`` (optional variable to stop installing gecko), ``install_mono`` (optional variable to stop installing mono).
+    create_prefix command. Parameters are:
+
+    * ``prefix``: the path
+
+    * ``arch``: optional architecture of the prefix, default: win64 unless a
+      32bit build is specified in the runner options.
+
+    * ``overrides``: optional dll overrides, format described later
+
+    * ``install_gecko``: optional variable to stop installing gecko
+
+    * ``install_mono``: optional variable to stop installing mono
 
     Example:
 
@@ -611,7 +625,7 @@ Example Linux game:
         working_dir: $GAMEDIR
 
       files:
-      - myfile: http://example.com/mygame.zip
+      - myfile: https://example.com/mygame.zip
 
       installer:
       - chmodx: $GAMEDIR/mygame
@@ -640,7 +654,7 @@ Example wine game:
       files:
       - installer: "N/A:Select the game's setup file"
       installer:
-      - task: 
+      - task:
         executable: installer
         name: wineexec
         prefix: $GAMEDIR/prefix
@@ -811,8 +825,7 @@ Example winesteam game:
         name: create_prefix
         prefix: $GAMEDIR/prefix
         arch: win64
-
-      wine:
+      winesteam:
         Desktop: true
         WineDesktop: 1024x768
         overrides:
@@ -831,7 +844,7 @@ Example steam linux game:
     game_slug: my-game
     version: Installer
     slug: my-game-installer
-    runner: winesteam
+    runner: steam
 
     script:
       game:
@@ -853,7 +866,7 @@ When submitting the installer script to lutris.net, only copy the script part. R
       args: --some-arg
 
     files:
-    - myfile: http://example.com
+    - myfile: https://example.com
 
     installer:
     - chmodx: $GAMEDIR/mygame
@@ -945,7 +958,7 @@ Sysoptions
 
 **winesteam (wine section options available to winesteam runner) section:**
 
-``steam_path`` (example: ``Z:\home\user\Steam\Steam.exe``) 
+``steam_path`` (example: ``Z:\home\user\Steam\Steam.exe``)
 
 ``quit_steam_on_exit`` (example: ``true``)
 
@@ -994,6 +1007,8 @@ Sysoptions
 ``disable_runtime`` (example: ``true``)
 
 ``disable_monitoring`` (example: ``true``)
+
+``disable_compositor`` (example: ``true``)
 
 ``reset_pulse`` (example: ``true``)
 

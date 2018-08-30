@@ -44,6 +44,7 @@ class InstallerWindow(Gtk.ApplicationWindow):
         self.set_size_request(420, 420)
         self.set_default_size(600, 480)
         self.set_position(Gtk.WindowPosition.CENTER)
+        self.set_show_menubar(False)
 
         self.vbox = Gtk.VBox()
         self.add(self.vbox)
@@ -530,7 +531,6 @@ class InstallerWindow(Gtk.ApplicationWindow):
 
     def on_destroy(self, widget):
         """destroy event handler"""
-        logger.debug("Destroying %s", self.__repr__())
         if self.interpreter:
             self.interpreter.cleanup()
         self.destroy()
