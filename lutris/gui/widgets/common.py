@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
 """Misc widgets used in the GUI."""
 import os
 
-from gi.repository import Gtk, GObject
+from gi.repository import Gtk, GObject, Pango
 
-from lutris.util.system import reverse_expanduser
+from lutris.util import system
 
 
 class SlugEntry(Gtk.Entry, Gtk.Editable):
@@ -13,7 +12,7 @@ class SlugEntry(Gtk.Entry, Gtk.Editable):
 
     def do_insert_text(self, new_text, length, position):
         """Filter inserted characters to only accept alphanumeric and dashes"""
-        new_text = ''.join([c for c in new_text if c.isalnum() or c == '-']).lower()
+        new_text = "".join([c for c in new_text if c.isalnum() or c == "-"]).lower()
         length = len(new_text)
         self.get_buffer().insert_text(position, new_text, length)
         return position + length
@@ -25,7 +24,7 @@ class NumberEntry(Gtk.Entry, Gtk.Editable):
 
     def do_insert_text(self, new_text, length, position):
         """Filter inserted characters to only accept numbers"""
-        new_text = ''.join([c for c in new_text if c.isnumeric()])
+        new_text = "".join([c for c in new_text if c.isnumeric()])
         if new_text:
             self.get_buffer().insert_text(position, new_text, length)
             return position + length
@@ -33,10 +32,11 @@ class NumberEntry(Gtk.Entry, Gtk.Editable):
 
 
 class FileChooserEntry(Gtk.Box):
-    def __init__(self, title='Select file', action=Gtk.FileChooserAction.OPEN,
-                 default_path=None):
+    def __init__(
+        self, title="Select file", action=Gtk.FileChooserAction.OPEN, default_path=None
+    ):
         """Widget with text entry and button to select file or folder."""
-        super(FileChooserEntry, self).__init__()
+        super().__init__(spacing=6)
 
         self.entry = Gtk.Entry()
         if default_path:
@@ -51,37 +51,48 @@ class FileChooserEntry(Gtk.Box):
         self.entry.connect("changed", self._entry_changed)
 
         self.file_chooser_dlg = Gtk.FileChooserDialog(
-            title=title,
-            transient_for=None,
-            action=action
+            title=title, transient_for=None, action=action
         )
 
         self.file_chooser_dlg.add_buttons(
-            '_Cancel', Gtk.ResponseType.CLOSE,
-            '_OK', Gtk.ResponseType.OK
+            "_Cancel", Gtk.ResponseType.CLOSE,
+            "_OK", Gtk.ResponseType.OK
         )
 
         self.file_chooser_dlg.set_create_folders(True)
 
         if default_path:
-            self.file_chooser_dlg.set_current_folder(
-                os.path.expanduser(default_path)
-            )
+            if not os.path.isdir(default_path):
+                default_folder = os.path.dirname(default_path)
+            else:
+                default_folder = default_path
+            self.file_chooser_dlg.set_current_folder(os.path.expanduser(default_folder))
 
         button = Gtk.Button()
         button.set_label("Browse...")
-        button.connect('clicked', self._open_filechooser, default_path)
+        button.connect("clicked", self.on_browse_clicked, default_path)
         self.add(button)
 
     def get_text(self):
         return self.entry.get_text()
 
-    def _open_filechooser(self, widget, default_path):
-        if default_path:
-            self.file_chooser_dlg.set_current_folder(
-                os.path.expanduser(default_path)
-            )
-        self.file_chooser_dlg.connect('response', self._select_file)
+    def get_filename(self):
+        return self.entry.get_text()
+
+    def get_default_folder(self, default=None):
+        if not default:
+            current_entry = self.get_text()
+            if os.path.isfile(current_entry):
+                current_entry = os.path.dirname(current_entry)
+            if system.path_exists(current_entry):
+                default = current_entry
+        return os.path.expanduser(default)
+
+    def on_browse_clicked(self, _widget, default_path):
+        default_folder = self.get_default_folder(default_path)
+        if default_folder:
+            self.file_chooser_dlg.set_current_folder(default_folder)
+        self.file_chooser_dlg.connect("response", self._select_file)
         self.file_chooser_dlg.run()
 
     def _entry_changed(self, widget):
@@ -98,12 +109,9 @@ class FileChooserEntry(Gtk.Box):
             for filename in sorted(os.listdir(current_path)):
                 if filename.startswith("."):
                     continue
-                if filefilter is not None \
-                        and not filename.startswith(filefilter):
+                if filefilter is not None and not filename.startswith(filefilter):
                     continue
-                self.path_completion.append(
-                    [os.path.join(current_path, filename)]
-                )
+                self.path_completion.append([os.path.join(current_path, filename)])
                 index += 1
                 if index > 15:
                     break
@@ -113,34 +121,35 @@ class FileChooserEntry(Gtk.Box):
             target_path = dialog.get_filename()
             if target_path:
                 self.file_chooser_dlg.set_current_folder(target_path)
-                self.entry.set_text(reverse_expanduser(target_path))
+                self.entry.set_text(system.reverse_expanduser(target_path))
         dialog.hide()
 
 
 class Label(Gtk.Label):
     """Standardised label for config vboxes."""
+
     def __init__(self, message=None):
         """Custom init of label."""
-        super(Label, self).__init__(label=message)
-        self.set_alignment(0.1, 0.0)
-        self.set_padding(5, 0)
+        super().__init__(label=message)
         self.set_line_wrap(True)
+        self.set_max_width_chars(22)
+        self.set_line_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self.set_size_request(230, -1)
+        self.set_alignment(0, 0.5)
+        self.set_justify(Gtk.Justification.LEFT)
 
 
-class VBox(Gtk.VBox):
-    def __init__(self):
-        GObject.GObject.__init__(self)
-        self.set_margin_top(20)
+class VBox(Gtk.Box):
+    def __init__(self, **kwargs):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, margin_top=18, **kwargs)
 
 
 class EditableGrid(Gtk.Grid):
-    __gsignals__ = {
-        "changed": (GObject.SIGNAL_RUN_FIRST, None, ())
-    }
+    __gsignals__ = {"changed": (GObject.SIGNAL_RUN_FIRST, None, ())}
 
     def __init__(self, data, columns):
         self.columns = columns
-        super(EditableGrid, self).__init__()
+        super().__init__()
         self.set_column_homogeneous(True)
         self.set_row_homogeneous(True)
         self.set_row_spacing(10)
@@ -148,7 +157,7 @@ class EditableGrid(Gtk.Grid):
 
         self.liststore = Gtk.ListStore(str, str)
         for item in data:
-            self.liststore.append(list(item))
+            self.liststore.append([str(value) for value in item])
 
         self.treeview = Gtk.TreeView.new_with_model(self.liststore)
         self.treeview.set_grid_lines(Gtk.TreeViewGridLines.BOTH)
@@ -184,17 +193,17 @@ class EditableGrid(Gtk.Grid):
 
     def on_add(self, widget):
         self.liststore.append(["", ""])
-        self.emit('changed')
+        self.emit("changed")
 
     def on_delete(self, widget):
         selection = self.treeview.get_selection()
         liststore, iter = selection.get_selected()
         self.liststore.remove(iter)
-        self.emit('changed')
+        self.emit("changed")
 
     def on_text_edited(self, widget, path, text, field):
         self.liststore[path][field] = text
-        self.emit('changed')
+        self.emit("changed")
 
     def get_data(self):
         model_data = []

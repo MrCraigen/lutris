@@ -1,8 +1,10 @@
+# pylint: disable=missing-docstring,no-member
 import os
+import random
 
-from gi.repository import GLib, GObject, Gtk
+from gi.repository import GLib, Gtk
 from lutris import api, settings
-from lutris.gui.dialogs import ErrorDialog
+from lutris.gui.dialogs import ErrorDialog, QuestionDialog
 from lutris.gui.widgets.dialogs import Dialog
 from lutris.util import jobs, system
 from lutris.util.downloader import Downloader
@@ -18,29 +20,28 @@ class RunnerInstallDialog(Dialog):
     COL_PROGRESS = 4
 
     def __init__(self, title, parent, runner):
-        super(RunnerInstallDialog, self).__init__(
-            title, parent, 0, ('_OK', Gtk.ResponseType.OK)
-        )
-        width, height = (340, 380)
+        super().__init__(title, parent, 0, ("_OK", Gtk.ResponseType.OK))
+        width, height = (512, 480)
         self.dialog_size = (width, height)
         self.set_default_size(width, height)
 
         self.runner = runner
         self.runner_info = api.get_runners(self.runner)
         if not self.runner_info:
-            ErrorDialog('Unable to get runner versions, check your internet connection',
-                        parent=parent)
+            ErrorDialog(
+                "Unable to get runner versions, check your internet connection",
+                parent=parent,
+            )
             return
-        label = Gtk.Label("%s version management" % self.runner_info['name'])
+        label = Gtk.Label("%s version management" % self.runner_info["name"])
         self.vbox.add(label)
         self.runner_store = self.get_store()
         scrolled_window = Gtk.ScrolledWindow()
         self.treeview = self.get_treeview(self.runner_store)
         self.installing = {}
-        self.connect('response', self.on_response)
+        self.connect("response", self.on_response)
 
-        scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC,
-                                   Gtk.PolicyType.AUTOMATIC)
+        scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         scrolled_window.set_shadow_type(Gtk.ShadowType.ETCHED_OUT)
         scrolled_window.add(self.treeview)
 
@@ -53,28 +54,30 @@ class RunnerInstallDialog(Dialog):
 
         renderer_toggle = Gtk.CellRendererToggle()
         renderer_text = Gtk.CellRendererText()
-        renderer_progress = Gtk.CellRendererProgress()
+        self.renderer_progress = Gtk.CellRendererProgress()
 
         installed_column = Gtk.TreeViewColumn(None, renderer_toggle, active=3)
         renderer_toggle.connect("toggled", self.on_installed_toggled)
         treeview.append_column(installed_column)
 
         version_column = Gtk.TreeViewColumn(None, renderer_text)
-        version_column.add_attribute(renderer_text, 'text', self.COL_VER)
-        version_column.set_property('min-width', 80)
+        version_column.add_attribute(renderer_text, "text", self.COL_VER)
+        version_column.set_property("min-width", 80)
         treeview.append_column(version_column)
 
-        arch_column = Gtk.TreeViewColumn(None, renderer_text,
-                                         text=self.COL_ARCH)
-        arch_column.set_property('min-width', 50)
+        arch_column = Gtk.TreeViewColumn(None, renderer_text, text=self.COL_ARCH)
+        arch_column.set_property("min-width", 50)
         treeview.append_column(arch_column)
 
-        progress_column = Gtk.TreeViewColumn(None, renderer_progress,
-                                             value=self.COL_PROGRESS,
-                                             visible=self.COL_PROGRESS)
-        progress_column.set_property('fixed-width', 60)
-        progress_column.set_property('min-width', 60)
-        progress_column.set_property('resizable', False)
+        progress_column = Gtk.TreeViewColumn(
+            None,
+            self.renderer_progress,
+            value=self.COL_PROGRESS,
+            visible=self.COL_PROGRESS,
+        )
+        progress_column.set_property("fixed-width", 60)
+        progress_column.set_property("min-width", 60)
+        progress_column.set_property("resizable", False)
         treeview.append_column(progress_column)
 
         return treeview
@@ -82,29 +85,31 @@ class RunnerInstallDialog(Dialog):
     def get_store(self):
         liststore = Gtk.ListStore(str, str, str, bool, int)
         for version_info in reversed(self.get_versions()):
-            version = version_info['version']
-            architecture = version_info['architecture']
+            version = version_info["version"]
+            architecture = version_info["architecture"]
             progress = 0
-            is_installed = os.path.exists(
-                self.get_runner_path(version, architecture)
-            )
+            is_installed = os.path.exists(self.get_runner_path(version, architecture))
             liststore.append(
-                [version_info['version'],
-                 version_info['architecture'],
-                 version_info['url'],
-                 is_installed,
-                 progress]
+                [
+                    version_info["version"],
+                    version_info["architecture"],
+                    version_info["url"],
+                    is_installed,
+                    progress,
+                ]
             )
         return liststore
 
     def get_versions(self):
-        return self.runner_info['versions']
+        return self.runner_info["versions"]
 
     def get_runner_path(self, version, arch):
-        return os.path.join(settings.RUNNER_DIR, self.runner,
-                            "{}-{}".format(version, arch))
+        return os.path.join(
+            settings.RUNNER_DIR, self.runner, "{}-{}".format(version, arch)
+        )
 
-    def get_dest_path(self, row):
+    @staticmethod
+    def get_dest_path(row):
         url = row[2]
         filename = os.path.basename(url)
         return os.path.join(settings.CACHE_DIR, filename)
@@ -112,7 +117,14 @@ class RunnerInstallDialog(Dialog):
     def on_installed_toggled(self, widget, path):
         row = self.runner_store[path]
         if row[self.COL_VER] in self.installing:
-            self.cancel_install(row)
+            confirm_dlg = QuestionDialog(
+                {
+                    "question": "Do you want to cancel the download?",
+                    "title": "Download starting",
+                }
+            )
+            if confirm_dlg.result == confirm_dlg.YES:
+                self.cancel_install(row)
         elif row[self.COL_INSTALLED]:
             self.uninstall_runner(row)
         else:
@@ -129,6 +141,10 @@ class RunnerInstallDialog(Dialog):
         arch = row[self.COL_ARCH]
         system.remove_folder(self.get_runner_path(version, arch))
         row[self.COL_INSTALLED] = False
+        if self.runner == "wine":
+            logger.debug("Clearing wine version cache")
+            from lutris.util.wine.wine import get_wine_versions
+            get_wine_versions.cache_clear()
 
     def install_runner(self, row):
         url = row[2]
@@ -146,9 +162,18 @@ class RunnerInstallDialog(Dialog):
             self.cancel_install(row)
             return False
         downloader.check_progress()
-        row[4] = downloader.progress_percentage
+        percent_downloaded = downloader.progress_percentage
+        if percent_downloaded >= 1:
+            row[4] = percent_downloaded
+            self.renderer_progress.props.pulse = -1
+            self.renderer_progress.props.text = "%d %%" % int(percent_downloaded)
+        else:
+            row[4] = 1
+            self.renderer_progress.props.pulse = random.randint(1, 100)
+            self.renderer_progress.props.text = "Downloading…"
         if downloader.state == downloader.COMPLETED:
             row[4] = 99
+            self.renderer_progress.props.text = "Extracting…"
             self.on_runner_downloaded(row)
             return False
         return True
@@ -156,28 +181,39 @@ class RunnerInstallDialog(Dialog):
     def on_runner_downloaded(self, row):
         version = row[0]
         architecture = row[1]
+        logger.debug("Runner %s for %s has finished downloading", version, architecture)
         src = self.get_dest_path(row)
         dst = self.get_runner_path(version, architecture)
         jobs.AsyncCall(self.extract, self.on_extracted, src, dst, row)
 
-    def extract(self, src, dst, row):
+    @staticmethod
+    def extract(src, dst, row):
         extract_archive(src, dst)
         return src, row
 
-    def on_extracted(self, xxx_todo_changeme, error):
-        (src, row) = xxx_todo_changeme
+    def on_extracted(self, row_info, error):
+        """Called when a runner archive is extracted"""
+        if error or not row_info:
+            ErrorDialog("Failed to retrieve the runner archive", parent=self)
+            return
+        src, row = row_info
         os.remove(src)
         row[self.COL_PROGRESS] = 0
         row[self.COL_INSTALLED] = True
+        self.renderer_progress.props.text = ""
         self.installing.pop(row[self.COL_VER])
+        if self.runner == "wine":
+            logger.debug("Clearing wine version cache")
+            from lutris.util.wine.wine import get_wine_versions
+            get_wine_versions.cache_clear()
 
-    def on_response(self, dialog, response):
+    def on_response(self, _dialog, _response):
         self.destroy()
 
 
 if __name__ == "__main__":
     import signal
+
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     RunnerInstallDialog("test", None, "wine")
-    GObject.threads_init()
     Gtk.main()
