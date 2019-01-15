@@ -1,6 +1,7 @@
 """Handle game specific actions"""
 import os
-from gi.repository import GLib, Gio
+import signal
+from gi.repository import Gio
 from lutris.command import MonitoredCommand
 from lutris.game import Game
 from lutris.gui import dialogs
@@ -13,7 +14,6 @@ from lutris.gui.logdialog import LogDialog
 from lutris.util.system import path_exists
 from lutris.util.log import logger
 from lutris.util import xdgshortcuts
-from lutris.util import resources
 
 
 class GameActions:
@@ -26,20 +26,17 @@ class GameActions:
 
     @property
     def game(self):
-        if not self.game_id:
-            raise RuntimeError("The Game ID has not been set")
         if not self._game:
-            self._game = Game(self.game_id)
+            self._game = self.application.get_game_by_id(self.game_id)
+            if not self._game:
+                self._game = Game(self.game_id)
             self._game.connect("game-error", self.window.on_game_error)
             self._game.connect("game-stop", self.on_stop)
         return self._game
 
     @property
     def is_game_running(self):
-        for game in self.application.running_games:
-            if game.id == self.game_id:
-                return True
-        return False
+        return bool(self.application.get_game_by_id(self.game_id))
 
     def set_game(self, game=None, game_id=None):
         if game:
@@ -121,7 +118,7 @@ class GameActions:
             "install": not self.game.is_installed,
             "play": self.game.is_installed and not self.is_game_running,
             "stop": self.is_game_running,
-            "show_logs": self.is_game_running,
+            "show_logs": self.game.is_installed,
             "configure": bool(self.game.is_installed),
             "install_more": self.game.is_installed,
             "execute-script": bool(
@@ -151,7 +148,9 @@ class GameActions:
 
     def get_disabled_entries(self):
         """Return a dictionary of actions that should be disabled for a game"""
-        return {}
+        return {
+            "show_logs": not self.is_game_running,
+        }
 
     def on_game_run(self, *_args):
         """Launch a game"""
@@ -159,14 +158,19 @@ class GameActions:
 
     def on_stop(self, caller):
         """Stops the game"""
-        if not isinstance(caller, Game):
-            # If the signal is coming from a game, it has already stopped.
-            self.game.stop()
         try:
-            logger.debug("Removing %s from running games", self.game_id)
-            self.application.running_games.pop(self.application.running_games.index(self.game))
+            game = self.application.running_games.pop(
+                self.application.running_games.index(self.game)
+            )
         except ValueError:
             logger.warning("%s not in running game list", self.game_id)
+            return
+
+        try:
+            os.kill(game.game_thread.game_process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        logger.debug("Removed game with ID %s from running games", self.game_id)
 
     def on_show_logs(self, _widget):
         """Display game log in a LogDialog"""
@@ -190,8 +194,7 @@ class GameActions:
         """Callback that presents the Add game dialog"""
 
         def on_game_added(game):
-            self.window.view.set_installed(game)
-            GLib.idle_add(resources.fetch_icon, game.slug, self.window.on_image_downloaded)
+            self.window.game_store.update(game)
             self.window.sidebar_listbox.update()
 
         AddGameDialog(
@@ -206,8 +209,8 @@ class GameActions:
 
         def on_dialog_saved():
             game_id = dialog.game.id
-            self.window.view.remove_game(game_id)
-            self.window.view.add_game_by_id(game_id)
+            self.window.game_store.remove_game(game_id)
+            self.window.game_store.add_game_by_id(game_id)
             self.window.view.set_selected_game(game_id)
             self.window.sidebar_listbox.update()
 
@@ -227,7 +230,9 @@ class GameActions:
     def on_browse_files(self, _widget):
         """Callback to open a game folder in the file browser"""
         path = self.game.get_browse_dir()
-        if path and os.path.exists(path):
+        if not path:
+            dialogs.NoticeDialog("This game has no installation directory")
+        elif path_exists(path):
             open_uri("file://%s" % path)
         else:
             dialogs.NoticeDialog("Can't open %s \nThe folder doesn't exist." % path)

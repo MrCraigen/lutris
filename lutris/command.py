@@ -15,6 +15,8 @@ from lutris.util.log import logger
 from lutris.util import system
 from lutris.util.signals import PID_HANDLERS, register_handler
 
+WRAPPER_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "lutris-wrapper")
+
 
 class MonitoredCommand:
     """Exexcutes a commmand while keeping track of its state"""
@@ -25,7 +27,6 @@ class MonitoredCommand:
             runner=None,
             env=None,
             term=None,
-            watch=True,
             cwd=None,
             include_processes=None,
             exclude_processes=None,
@@ -46,7 +47,6 @@ class MonitoredCommand:
         self.game_process = None
         self.return_code = None
         self.terminal = system.find_executable(term)
-        self.watch = watch
         self.is_running = True
         self.stdout = ""
         self.daemon = True
@@ -58,8 +58,8 @@ class MonitoredCommand:
         self.set_log_buffer(log_buffer)
         self.stdout_monitor = None
         self.watch_children_running = False
-        self.include_processes = include_processes
-        self.exclude_processes = exclude_processes
+        self.include_processes = include_processes or []
+        self.exclude_processes = exclude_processes or []
 
         # Keep a copy of previously running processes
         self.cwd = self.get_cwd(cwd)
@@ -68,15 +68,16 @@ class MonitoredCommand:
     def wrapper_command(self):
         """Return launch arguments for the wrapper script"""
 
-        wrapper_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "lutris-wrapper")
         return [
-            wrapper_path,
+            WRAPPER_SCRIPT,
             str(len(self.include_processes)),
             str(len(self.exclude_processes)),
         ] + self.include_processes + self.exclude_processes + self.command
 
     def set_log_buffer(self, log_buffer):
         """Attach a TextBuffer to this command enables the buffer handler"""
+        if not log_buffer:
+            return
         self.log_buffer = log_buffer
         if self.log_handler_buffer not in self.log_handlers:
             self.log_handlers.append(self.log_handler_buffer)
@@ -106,9 +107,10 @@ class MonitoredCommand:
 
     def start(self):
         """Run the thread."""
-        logger.debug("Running command: %s", " ".join(self.wrapper_command))
+        logger.debug("Running %s", " ".join(self.wrapper_command))
         for key, value in self.env.items():
             logger.debug("ENV: %s=\"%s\"", key, value)
+            pass
 
         if self.terminal:
             self.game_process = self.run_in_terminal()
@@ -122,12 +124,11 @@ class MonitoredCommand:
 
         register_handler(self.game_process.pid, self.on_stop)
 
-        if self.watch:
-            self.stdout_monitor = GLib.io_add_watch(
-                self.game_process.stdout,
-                GLib.IO_IN | GLib.IO_HUP,
-                self.on_stdout_output,
-            )
+        self.stdout_monitor = GLib.io_add_watch(
+            self.game_process.stdout,
+            GLib.IO_IN | GLib.IO_HUP,
+            self.on_stdout_output,
+        )
 
     def log_handler_stdout(self, line):
         """Add the line to this command's stdout attribute"""
@@ -145,14 +146,15 @@ class MonitoredCommand:
 
     def on_stop(self, returncode):
         """Callback registered on the SIGCHLD handler"""
+        logger.debug("The process has terminated with code %s", returncode)
         self.is_running = False
+        self.return_code = returncode
 
         resume_stop = self.stop()
         if not resume_stop:
             logger.info("Full shutdown prevented")
             return False
 
-        self.return_code = returncode
         return False
 
     def on_stdout_output(self, stdout, condition):
@@ -204,15 +206,10 @@ class MonitoredCommand:
             if self.cwd and not system.path_exists(self.cwd):
                 os.makedirs(self.cwd)
 
-            if self.watch:
-                pipe = subprocess.PIPE
-            else:
-                pipe = None
-
             return subprocess.Popen(
                 command,
                 bufsize=1,
-                stdout=pipe,
+                stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 cwd=self.cwd,
                 env=env,
@@ -238,29 +235,29 @@ class MonitoredCommand:
         """Stops the current game process and cleans up the instance"""
         try:
             PID_HANDLERS.pop(self.game_process.pid)
-        except KeyError:  # may have never been added.
-            logger.debug("Can't find handler for pid %s", self.game_process.pid)
+        except KeyError:
+            # This game has no stop handler
+            pass
 
         try:
             self.game_process.terminate()
         except ProcessLookupError:  # process already dead.
             logger.debug("Management process looks dead already.")
 
-        # Remove logger early to avoid issues with zombie processes
-        # (unconfirmed)
-        if self.stdout_monitor:
-            logger.debug("Detaching logger")
-            GLib.source_remove(self.stdout_monitor)
-
         if hasattr(self, "stop_func"):
             resume_stop = self.stop_func()
             if not resume_stop:
                 return False
 
+        if self.stdout_monitor:
+            logger.debug("Detaching logger")
+            GLib.source_remove(self.stdout_monitor)
+        else:
+            logger.debug("logger already detached")
+
         self.restore_environment()
         self.is_running = False
         self.ready_state = False
-
         return True
 
 

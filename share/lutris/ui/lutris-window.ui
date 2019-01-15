@@ -20,6 +20,7 @@
             <property name="receives_default">False</property>
             <property name="action_name">win.connect</property>
             <property name="relief">none</property>
+            <property name="xalign">0</property>
           </object>
           <packing>
             <property name="expand">False</property>
@@ -34,6 +35,7 @@
             <property name="receives_default">False</property>
             <property name="action_name">win.disconnect</property>
             <property name="relief">none</property>
+            <property name="xalign">0</property>
             <child>
               <object class="GtkBox">
                 <property name="visible">True</property>
@@ -84,6 +86,7 @@
             <property name="receives_default">False</property>
             <property name="action_name">win.register-account</property>
             <property name="relief">none</property>
+            <property name="xalign">0</property>
           </object>
           <packing>
             <property name="expand">False</property>
@@ -159,6 +162,7 @@
             <property name="receives_default">False</property>
             <property name="action_name">win.add-game</property>
             <property name="relief">none</property>
+            <property name="xalign">0</property>
             <child>
               <object class="GtkLabel">
                 <property name="visible">True</property>
@@ -181,6 +185,7 @@
             <property name="receives_default">False</property>
             <property name="action_name">win.sync-local</property>
             <property name="relief">none</property>
+            <property name="xalign">0</property>
             <child>
               <object class="GtkLabel">
                 <property name="visible">True</property>
@@ -321,36 +326,6 @@
             <property name="can_focus">True</property>
             <property name="receives_default">False</property>
             <property name="action_name">win.view-sorting</property>
-            <property name="text" translatable="yes">_Runner</property>
-            <property name="action-target">'runner'</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-            <property name="position">6</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkModelButton">
-            <property name="visible">True</property>
-            <property name="can_focus">True</property>
-            <property name="receives_default">False</property>
-            <property name="action_name">win.view-sorting</property>
-            <property name="text" translatable="yes">_Platform</property>
-            <property name="action-target">'platform'</property>
-          </object>
-          <packing>
-            <property name="expand">False</property>
-            <property name="fill">True</property>
-            <property name="position">7</property>
-          </packing>
-        </child>
-        <child>
-          <object class="GtkModelButton">
-            <property name="visible">True</property>
-            <property name="can_focus">True</property>
-            <property name="receives_default">False</property>
-            <property name="action_name">win.view-sorting</property>
             <property name="text" translatable="yes">_Last played</property>
             <property name="action-target">'lastplayed'</property>
           </object>
@@ -439,6 +414,7 @@
     <property name="window_position">center</property>
     <property name="icon_name">lutris</property>
     <signal name="destroy" handler="on_destroy" swapped="no"/>
+    <signal name="size-allocate" handler="on_resize" swapped="no"/>
     <child type="titlebar">
       <object class="GtkHeaderBar" id="header_bar">
         <property name="visible">True</property>
@@ -577,93 +553,6 @@
       <object class="GtkStack">
         <property name="visible">True</property>
         <property name="can_focus">False</property>
-        <child>
-          <object class="GtkBox" id="splash_box">
-            <property name="visible">True</property>
-            <property name="can_focus">False</property>
-            <property name="valign">center</property>
-            <property name="orientation">vertical</property>
-            <property name="spacing">10</property>
-            <child>
-              <object class="GtkLabel">
-                <property name="visible">True</property>
-                <property name="can_focus">False</property>
-                <property name="label" translatable="yes">Welcome to Lutris</property>
-                <attributes>
-                  <attribute name="scale" value="2"/>
-                </attributes>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">False</property>
-                <property name="position">0</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLabel">
-                <property name="visible">True</property>
-                <property name="can_focus">False</property>
-                <property name="label" translatable="yes">There are no games currently installed, you can start adding some by:</property>
-                <property name="lines">4</property>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">False</property>
-                <property name="position">1</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLinkButton">
-                <property name="label" translatable="yes">Browsing Lutris.net for games to install</property>
-                <property name="visible">True</property>
-                <property name="can_focus">True</property>
-                <property name="receives_default">True</property>
-                <property name="halign">center</property>
-                <property name="relief">half</property>
-                <property name="uri">https://lutris.net/games/</property>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">False</property>
-                <property name="position">2</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLinkButton" id="connect_link">
-                <property name="label" translatable="yes">Connecting to your Lutris.net account to sync your library</property>
-                <property name="visible">True</property>
-                <property name="can_focus">True</property>
-                <property name="receives_default">True</property>
-                <property name="halign">center</property>
-                <property name="action_name">win.connect</property>
-                <property name="relief">half</property>
-                <property name="uri">null</property>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">False</property>
-                <property name="position">3</property>
-              </packing>
-            </child>
-            <child>
-              <object class="GtkLinkButton">
-                <property name="label" translatable="yes">Manually adding a game installed on your hard drive</property>
-                <property name="visible">True</property>
-                <property name="can_focus">True</property>
-                <property name="receives_default">True</property>
-                <property name="halign">center</property>
-                <property name="action_name">win.add-game</property>
-                <property name="relief">half</property>
-                <property name="uri">null</property>
-              </object>
-              <packing>
-                <property name="expand">False</property>
-                <property name="fill">False</property>
-                <property name="position">4</property>
-              </packing>
-            </child>
-          </object>
-        </child>
         <child>
           <object class="GtkBox" id="main_box">
             <property name="visible">True</property>

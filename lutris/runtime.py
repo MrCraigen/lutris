@@ -113,10 +113,10 @@ class Runtime:
             logger.error(error)
             return
         archive_path, destination_path = result
-        logger.debug("Finished extracting %s to %s", archive_path, destination_path)
         os.unlink(archive_path)
         self.set_updated_at()
         self.updater.notify_finish(self)
+        return destination_path
 
 
 class RuntimeUpdater:
@@ -236,8 +236,8 @@ def get_paths(prefer_system_libs=True, wine_path=None):
             # This prioritizes system libraries over
             # the Lutris and Steam runtimes.
             for lib_paths in LINUX_SYSTEM.iter_lib_folders():
-                for arch in LINUX_SYSTEM.runtime_architectures:
-                    paths.append(lib_paths[0])
+                for index, _arch in enumerate(LINUX_SYSTEM.runtime_architectures):
+                    paths.append(lib_paths[index])
 
         # Then resolve absolute paths for the runtime
         paths += [os.path.join(RUNTIME_DIR, path) for path in runtime_paths]

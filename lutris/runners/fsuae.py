@@ -137,7 +137,10 @@ class fsuae(Runner):
             "type": "choice",
             "choices": flsound_choices,
             "default": "0",
-            "help": "Set volume to 0 to disable floppy drive clicks when the drive is empty. Max volume is 100.",
+            "help": (
+                "Set volume to 0 to disable floppy drive clicks "
+                "when the drive is empty. Max volume is 100."
+            )
         },
         {
             "option": "fdspeed",
@@ -145,7 +148,12 @@ class fsuae(Runner):
             "type": "choice",
             "choices": flspeed_choices,
             "default": "100",
-            "help": "Set the speed of the emulated floppy drives, in percent. For example, you can specify 800 to get an 8x increase in speed. Use 0 to specify turbo mode. Turbo mode means that all floppy operations complete immediately. The default is 100 for most models.",
+            "help": (
+                "Set the speed of the emulated floppy drives, in percent. "
+                "For example, you can specify 800 to get an 8x increase in "
+                "speed. Use 0 to specify turbo mode. Turbo mode means that "
+                "all floppy operations complete immediately. The default is 100 for most models."
+            )
         },
         {
             "option": "grafixcard",
@@ -153,7 +161,10 @@ class fsuae(Runner):
             "type": "choice",
             "choices": gpucard_choices,
             "default": "0",
-            "help": "Use this option to enable a graphics card. This option is none by default, in which case only chipset graphics (OCS/ECS/AGA) support is available.",
+            "help": (
+                "Use this option to enable a graphics card. This option is none by default, in "
+                "which case only chipset graphics (OCS/ECS/AGA) support is available."
+            )
         },
         {
             "option": "grafixmemory",
@@ -161,7 +172,10 @@ class fsuae(Runner):
             "type": "choice",
             "choices": gpumem_choices,
             "default": "0",
-            "help": "Override the amount of graphics memory on the graphics card. The 0 MB option is not really valid, but exists for user interface reasons.",
+            "help": (
+                "Override the amount of graphics memory on the graphics card. The 0 MB option is "
+                "not really valid, but exists for user interface reasons."
+            )
         },
         {
             "option": "gfx_fullscreen_amiga",
@@ -199,46 +213,6 @@ class fsuae(Runner):
             for index, machine in enumerate(self.model_choices):
                 if machine[1] == model:
                     return self.platforms[index]
-        return ""
-
-    def get_memory(self):
-        fmemory = self.runner_config.get("fmemory")
-        if fmemory:
-            for index, fmemory1 in enumerate(self.memory_choices):
-                if fmemory1[1] == fmemory:
-                    return self.mem0ry[index]
-        return ""
-
-    def get_flsound(self):
-        fdvolume = self.runner_config.get("fdvolume")
-        if fdvolume:
-            for index, fdvolume1 in enumerate(self.flsound_choices):
-                if fdvolume1[1] == fdvolume:
-                    return self.flsound[index]
-        return ""
-
-    def get_flspeed(self):
-        fdspeed = self.runner_config.get("fdspeed")
-        if fdspeed:
-            for index, fdspeed1 in enumerate(self.flspeed_choices):
-                if fdspeed1[1] == fdspeed:
-                    return self.flspeed[index]
-        return ""
-
-    def get_gpucard(self):
-        grafixcard = self.runner_config.get("grafixcard")
-        if grafixcard:
-            for index, grafixcard1 in enumerate(self.gpucard_choices):
-                if grafixcard1[1] == grafixcard:
-                    return self.gpucard[index]
-        return ""
-
-    def get_gpumem(self):
-        grafixmemory = self.runner_config.get("grafixmemory")
-        if grafixmemory:
-            for index, grafixmemory1 in enumerate(self.gpumem_choices):
-                if grafixmemory1[1] == grafixmemory:
-                    return self.gpumem[index]
         return ""
 
     def insert_floppies(self):

@@ -8,6 +8,7 @@ from lutris import runtime
 from lutris.settings import RUNTIME_DIR
 from lutris.gui.dialogs import FileDialog
 from lutris.runners.runner import Runner
+from lutris.util.jobs import thread_safe_call
 from lutris.util import display, system
 from lutris.util.log import logger
 from lutris.util.strings import parse_version
@@ -157,31 +158,26 @@ class wine(Runner):
                 version_choices.append((version, version))
             return version_choices
 
-        def esync_limit_callback(config):
+        def esync_limit_callback(widget, option, config):
             limits_set = is_esync_limit_set()
             wine_path = self.get_path_for_version(config["version"])
             wine_ver = is_version_esync(wine_path)
 
-            if not limits_set and not wine_ver:
-                esync_display_version_warning(False)
-                esync_display_limit_warning()
-                return False
+            if not wine_ver:
+                response = thread_safe_call(esync_display_version_warning)
 
             if not limits_set:
-                esync_display_limit_warning()
-                return False
+                thread_safe_call(esync_display_limit_warning)
+                response = False
 
-            if not wine_ver:
-                if not esync_display_version_warning(False):
-                    return False
+            return widget, option, response
 
-            return True
-
-        def dxvk_vulkan_callback(config):
+        def dxvk_vulkan_callback(widget, option, config):
+            response = True
             if not is_vulkan_supported():
-                if not display_vulkan_error(False):
-                    return False
-            return True
+                if not thread_safe_call(display_vulkan_error):
+                    response = False
+            return widget, option, response
 
         self.runner_options = [
             {
@@ -200,6 +196,7 @@ class wine(Runner):
                 "option": "custom_wine_path",
                 "label": "Custom Wine executable",
                 "type": "file",
+                "advanced": True,
                 "help": (
                     "The Wine executable to be used if you have "
                     'selected "Custom" as the Wine version.'
@@ -368,6 +365,7 @@ class wine(Runner):
                 "option": "Audio",
                 "label": "Audio driver",
                 "type": "choice",
+                "advanced": True,
                 "choices": [
                     ("Auto", "auto"),
                     ("ALSA", "alsa"),
@@ -382,10 +380,10 @@ class wine(Runner):
                 ),
             },
             {
-                "option": "ShowCrashDialog",
-                "label": "Show crash dialogs",
-                "type": "bool",
-                "default": False,
+                "option": "overrides",
+                "type": "mapping",
+                "label": "DLL overrides",
+                "help": "Sets WINEDLLOVERRIDES when launching the game.",
             },
             {
                 "option": "show_debug",
@@ -399,18 +397,17 @@ class wine(Runner):
                     ("Full (CAUTION: Will cause MASSIVE slowdown)", "+all"),
                 ],
                 "default": "-all",
-                "advanced": True,
                 "help": (
                     "Output debugging information in the game log "
                     "(might affect performance)"
                 ),
             },
             {
-                "option": "overrides",
-                "type": "mapping",
-                "label": "DLL overrides",
+                "option": "ShowCrashDialog",
+                "label": "Show crash dialogs",
+                "type": "bool",
+                "default": False,
                 "advanced": True,
-                "help": "Sets WINEDLLOVERRIDES when launching the game.",
             },
             {
                 "option": "autoconf_joypad",
@@ -428,6 +425,7 @@ class wine(Runner):
                 "type": "bool",
                 "label": "Create a sandbox for wine folders",
                 "default": True,
+                "advanced": True,
                 "help": (
                     "Do not use $HOME for desktop integration folders.\n"
                     "By default, it use the directories in the confined "
@@ -439,6 +437,7 @@ class wine(Runner):
                 "type": "directory_chooser",
                 "label": "Sandbox directory",
                 "help": "Custom directory for desktop integration folders.",
+                "advanced": True,
             },
         ]
 
@@ -828,10 +827,6 @@ class wine(Runner):
                 command.append(arg)
         launch_info["command"] = command
         return launch_info
-
-    def stop(self):
-        """Does nothing whatsoever."""
-        return True
 
     @staticmethod
     def parse_wine_path(path, prefix_path=None):

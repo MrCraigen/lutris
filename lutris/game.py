@@ -34,21 +34,17 @@ class Game(GObject.Object):
 
     __gsignals__ = {
         "game-error": (GObject.SIGNAL_RUN_FIRST, None, (str,)),
+        "game-start": (GObject.SIGNAL_RUN_FIRST, None, ()),
         "game-stop": (GObject.SIGNAL_RUN_FIRST, None, ())
     }
 
     def __init__(self, game_id=None):
         super().__init__()
-        self.id = game_id
+        self.id = game_id  # pylint: disable=invalid-name
         self.runner = None
-        self.game_thread = None
-        self.prelaunch_executor = None
-        self.heartbeat = None
         self.config = None
-        self.killswitch = None
-        self.state = self.STATE_IDLE
-        self.exit_main_loop = False
-        self.xboxdrv_thread = None
+
+        # Load attributes from database
         game_data = pga.get_game_by_field(game_id, "id")
         self.slug = game_data.get("slug") or ""
         self.runner_name = game_data.get("runner") or ""
@@ -64,8 +60,19 @@ class Game(GObject.Object):
         self.steamid = game_data.get("steamid") or ""
         self.has_custom_banner = bool(game_data.get("has_custom_banner"))
         self.has_custom_icon = bool(game_data.get("has_custom_icon"))
+        try:
+            self.playtime = float(game_data.get("playtime") or 0.0)
+        except ValueError:
+            logger.error("Invalid playtime value %s", game_data.get("playtime"))
 
         self.load_config()
+        self.game_thread = None
+        self.prelaunch_executor = None
+        self.heartbeat = None
+        self.killswitch = None
+        self.state = self.STATE_IDLE
+        self.exit_main_loop = False
+        self.xboxdrv_thread = None
         self.game_runtime_config = {}
         self.resolution_changed = False
         self.compositor_disabled = False
@@ -74,11 +81,7 @@ class Game(GObject.Object):
         self.log_buffer = Gtk.TextBuffer()
         self.log_buffer.create_tag("warning", foreground="red")
 
-        self.timer = Timer("hours")
-        try:
-            self.playtime = float(game_data.get("playtime") or 0.0)
-        except ValueError:
-            logger.error("Invalid playtime value %s", game_data.get("playtime"))
+        self.timer = Timer()
 
     def __repr__(self):
         return self.__unicode__()
@@ -91,6 +94,7 @@ class Game(GObject.Object):
 
     @property
     def formatted_playtime(self):
+        """Return a human readable formatted play time"""
         return strings.get_formatted_playtime(self.playtime)
 
     @staticmethod
@@ -140,6 +144,7 @@ class Game(GObject.Object):
             self.runner = runner_class(self.config)
 
     def set_desktop_compositing(self, enable):
+        """Enables or disables compositing"""
         if enable:
             system.execute(self.start_compositor, shell=True)
         else:
@@ -183,6 +188,7 @@ class Game(GObject.Object):
         do not save the config. This is useful when exiting the game since the
         config might have changed and we don't want to override the changes.
         """
+        logger.debug("Saving %s", self)
         if not metadata_only:
             self.config.save()
         self.id = pga.add_or_update(
@@ -482,7 +488,7 @@ class Game(GObject.Object):
             self.game_thread.stop_func = self.runner.stop
         self.game_thread.start()
         self.state = self.STATE_RUNNING
-
+        self.emit("game-start")
         self.heartbeat = GLib.timeout_add(HEARTBEAT_DELAY, self.beat)
 
     def xboxdrv_start(self, config):
@@ -531,12 +537,16 @@ class Game(GObject.Object):
             return False
         return True
 
+    def stop_timer(self):
+        """Stops the timer"""
+        if not self.timer.finished:
+            self.timer.end()
+            self.playtime = (self.timer.duration + self.playtime) / 3600
+
     def stop(self):
+        """Stops the game"""
         if self.state == self.STATE_STOPPED:
             logger.debug("Game already stopped")
-            return
-        if not self.runner:
-            self.error("No game actually running, this shouldn't happen")
             return
 
         logger.info("Stopping %s", self)
@@ -546,16 +556,12 @@ class Game(GObject.Object):
         if self.game_thread:
             jobs.AsyncCall(self.game_thread.stop, None)
         self.state = self.STATE_STOPPED
-        if not self.timer.finished:
-            self.timer.end()
-            self.playtime = self.timer.duration + self.playtime
+        self.stop_timer()
 
     def on_game_quit(self):
         """Restore some settings and cleanup after game quit."""
 
-        if not self.timer.finished:
-            self.timer.end()
-            self.playtime = self.timer.duration + self.playtime
+        self.stop_timer()
 
         if self.prelaunch_executor and self.prelaunch_executor.is_running:
             logger.info("Stopping prelaunch script")

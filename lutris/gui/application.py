@@ -74,7 +74,6 @@ class Application(Gtk.Application):
         GLib.set_application_name(_("Lutris"))
         self.running_games = []
         self.window = None
-        self.help_overlay = None
         self.tray = None
         self.css_provider = Gtk.CssProvider.new()
 
@@ -200,19 +199,6 @@ class Application(Gtk.Application):
             "URI",
         )
 
-    def set_connect_state(self, connected):
-        return  # XXX
-        # We fiddle with the menu directly which is rather ugly
-        menu = (
-            self.get_menubar().get_item_link(0, "submenu").get_item_link(0, "section")
-        )
-        menu.remove(0)  # Assert that it is the very first item
-        if connected:
-            item = Gio.MenuItem.new("Disconnect", "win.disconnect")
-        else:
-            item = Gio.MenuItem.new("Connect", "win.connect")
-        menu.prepend_item(item)
-
     def do_startup(self):
         Gtk.Application.do_startup(self)
         signal.signal(signal.SIGINT, signal.SIG_DFL)
@@ -227,20 +213,6 @@ class Application(Gtk.Application):
         )
         appmenu = builder.get_object("app-menu")
         self.set_app_menu(appmenu)
-
-        if Gtk.get_major_version() > 3 or Gtk.get_minor_version() >= 20:
-            builder = Gtk.Builder.new_from_file(
-                os.path.join(datapath.get(), "ui", "help-overlay.ui")
-            )
-            self.help_overlay = builder.get_object("help_overlay")
-
-            it = appmenu.iterate_item_links(appmenu.get_n_items() - 1)
-            assert it.next()
-            last_section = it.get_value()
-            shortcuts_item = Gio.MenuItem.new(
-                _("Keyboard Shortcuts"), "win.show-help-overlay"
-            )
-            last_section.prepend_item(shortcuts_item)
 
         menubar = builder.get_object("menubar")
         self.set_menubar(menubar)
@@ -257,12 +229,11 @@ class Application(Gtk.Application):
     def do_activate(self):
         if not self.window:
             self.window = LutrisWindow(application=self)
-            if hasattr(self.window, "set_help_overlay"):
-                self.window.set_help_overlay(self.help_overlay)
             screen = self.window.props.screen
             Gtk.StyleContext.add_provider_for_screen(
                 screen, self.css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
+        self.window.present()
 
     @staticmethod
     def _print(command_line, string):
@@ -375,16 +346,12 @@ class Application(Gtk.Application):
                 game_slug=game_slug,
                 installer_file=installer_file,
                 revision=revision,
-                parent=self,
-                application=self.application,
+                parent=self.window,
+                application=self,
             )
         elif action in ("rungame", "rungameid"):
             if not db_game or not db_game["id"]:
-                if self.window.is_visible():
-                    logger.info("No game found in library")
-                else:
-                    logger.info("No game found in library, shutting down")
-                    self.do_shutdown()
+                logger.warning("No game found in library")
                 return 0
 
             logger.info("Launching %s", db_game["name"])
@@ -401,8 +368,14 @@ class Application(Gtk.Application):
 
     def launch(self, game):
         """Launch a Lutris game"""
+        logger.debug("Adding game %s (%s) to running games", game, id(game))
         self.running_games.append(game)
         game.play()
+
+    def get_game_by_id(self, game_id):
+        for game in self.running_games:
+            if game.id == game_id:
+                return game
 
     @staticmethod
     def get_lutris_action(url):
@@ -411,7 +384,7 @@ class Application(Gtk.Application):
         if url:
             url = url.get_strv()
 
-        if url and len(url):
+        if url:
             url = url[0]  # TODO: Support multiple
             installer_info = parse_installer_url(url)
             if installer_info is False:
