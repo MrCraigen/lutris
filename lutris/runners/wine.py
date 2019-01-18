@@ -12,7 +12,7 @@ from lutris.util.jobs import thread_safe_call
 from lutris.util import display, system
 from lutris.util.log import logger
 from lutris.util.strings import parse_version
-from lutris.util.vkquery import is_vulkan_supported
+from lutris.util.graphics.vkquery import is_vulkan_supported
 from lutris.util.wine.prefix import WinePrefixManager
 from lutris.util.wine.x360ce import X360ce
 from lutris.util.wine import dxvk
@@ -162,6 +162,7 @@ class wine(Runner):
             limits_set = is_esync_limit_set()
             wine_path = self.get_path_for_version(config["version"])
             wine_ver = is_version_esync(wine_path)
+            response = True
 
             if not wine_ver:
                 response = thread_safe_call(esync_display_version_warning)
@@ -680,10 +681,17 @@ class wine(Runner):
 
     def get_dll_overrides(self):
         """Return the DLLs overriden at runtime"""
-        overrides = self.runner_config.get("overrides") or {}
-        if not isinstance(overrides, dict):
-            logger.warning("DLL overrides is not a mapping: %s", overrides)
+        try:
+            overrides = self.runner_config['overrides']
+        except KeyError:
             overrides = {}
+        else:
+            if not isinstance(overrides, dict):
+                logger.warning("DLL overrides is not a mapping: %s", overrides)
+                overrides = {}
+            else:
+                overrides = overrides.copy()
+
         overrides.update(self.dll_overrides)
         return overrides
 
@@ -718,8 +726,14 @@ class wine(Runner):
             wine_root = os.path.dirname(os.path.dirname(wine_path))
         else:
             wine_root = None
+        if "-4." in wine_path or "/4." in wine_path:
+            version = "Ubuntu-18.04"
+        else:
+            version = "legacy"
         return runtime.get_env(
-            self.system_config.get("prefer_system_libs", True), wine_path=wine_root
+            version=version,
+            prefer_system_libs=self.system_config.get("prefer_system_libs", True),
+            wine_path=wine_root
         )
 
     def get_pids(self, wine_path=None):

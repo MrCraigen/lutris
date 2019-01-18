@@ -32,21 +32,18 @@ gi.require_version("GnomeDesktop", "3.0")
 from gi.repository import Gio, GLib, Gtk
 from lutris import pga
 from lutris import settings
-from lutris.config import check_config
 from lutris.gui.dialogs import ErrorDialog, InstallOrPlayDialog
 from lutris.gui.installerwindow import InstallerWindow
 from lutris.migrations import migrate
 from lutris.platforms import update_platforms
-from lutris.settings import read_setting, VERSION
 from lutris.command import exec_command
 from lutris.util.steam.appmanifest import AppManifest, get_appmanifests
 from lutris.util.steam.config import get_steamapps_paths
 from lutris.util import datapath
-from lutris.util.log import logger, console_handler, DEBUG_FORMATTER
+from lutris.util import log
+from lutris.util.log import logger
 from lutris.util.resources import parse_installer_url
-from lutris.util.system import check_libs
-from lutris.util.drivers import check_driver
-from lutris.util.vkquery import check_vulkan
+from lutris.startup import run_all_checks
 from lutris.util.wine.dxvk import init_dxvk_versions
 
 from .lutriswindow import LutrisWindow
@@ -63,12 +60,9 @@ class Application(Gtk.Application):
         gettext.bindtextdomain("lutris", "/usr/share/locale")
         gettext.textdomain("lutris")
 
-        check_config()
+        run_all_checks()
         migrate()
         update_platforms()
-        check_driver()
-        check_libs()
-        check_vulkan()
         init_dxvk_versions()
 
         GLib.set_application_name(_("Lutris"))
@@ -111,92 +105,48 @@ class Application(Gtk.Application):
                 "was added in GLib 2.56 (Released 2018-03-12)"
             )
         self.add_main_option(
-            "version",
-            ord("v"),
-            GLib.OptionFlags.NONE,
-            GLib.OptionArg.NONE,
-            _("Print the version of Lutris and exit"),
-            None,
+            "version", ord("v"), GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
+            _("Print the version of Lutris and exit"), None,
         )
         self.add_main_option(
-            "debug",
-            ord("d"),
-            GLib.OptionFlags.NONE,
-            GLib.OptionArg.NONE,
-            _("Show debug messages"),
-            None,
+            "debug", ord("d"), GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
+            _("Show debug messages"), None,
         )
         self.add_main_option(
-            "install",
-            ord("i"),
-            GLib.OptionFlags.NONE,
-            GLib.OptionArg.STRING,
-            _("Install a game from a yml file"),
-            None,
+            "install", ord("i"), GLib.OptionFlags.NONE, GLib.OptionArg.STRING,
+            _("Install a game from a yml file"), None,
         )
         self.add_main_option(
-            "exec",
-            ord("e"),
-            GLib.OptionFlags.NONE,
-            GLib.OptionArg.STRING,
-            _("Execute a program with the lutris runtime"),
-            None,
+            "exec", ord("e"), GLib.OptionFlags.NONE, GLib.OptionArg.STRING,
+            _("Execute a program with the lutris runtime"), None,
         )
         self.add_main_option(
-            "list-games",
-            ord("l"),
-            GLib.OptionFlags.NONE,
-            GLib.OptionArg.NONE,
-            _("List all games in database"),
-            None,
+            "list-games", ord("l"), GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
+            _("List all games in database"), None,
         )
         self.add_main_option(
-            "installed",
-            ord("o"),
-            GLib.OptionFlags.NONE,
-            GLib.OptionArg.NONE,
-            _("Only list installed games"),
-            None,
+            "installed", ord("o"), GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
+            _("Only list installed games"), None,
         )
         self.add_main_option(
-            "list-steam-games",
-            ord("s"),
-            GLib.OptionFlags.NONE,
-            GLib.OptionArg.NONE,
-            _("List available Steam games"),
-            None,
+            "list-steam-games", ord("s"), GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
+            _("List available Steam games"), None,
         )
         self.add_main_option(
-            "list-steam-folders",
-            0,
-            GLib.OptionFlags.NONE,
-            GLib.OptionArg.NONE,
-            _("List all known Steam library folders"),
-            None,
+            "list-steam-folders", 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
+            _("List all known Steam library folders"), None,
         )
         self.add_main_option(
-            "json",
-            ord("j"),
-            GLib.OptionFlags.NONE,
-            GLib.OptionArg.NONE,
-            _("Display the list of games in JSON format"),
-            None,
+            "json", ord("j"), GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
+            _("Display the list of games in JSON format"), None,
         )
         self.add_main_option(
-            "reinstall",
-            0,
-            GLib.OptionFlags.NONE,
-            GLib.OptionArg.NONE,
-            _("Reinstall game"),
-            None,
+            "reinstall", 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
+            _("Reinstall game"), None,
         )
         self.add_main_option(
-            GLib.OPTION_REMAINING,
-            0,
-            GLib.OptionFlags.NONE,
-            GLib.OptionArg.STRING_ARRAY,
-            _("uri to open"),
-            "URI",
+            GLib.OPTION_REMAINING, 0, GLib.OptionFlags.NONE, GLib.OptionArg.STRING_ARRAY,
+            _("uri to open"), "URI",
         )
 
     def do_startup(self):
@@ -216,14 +166,13 @@ class Application(Gtk.Application):
 
         menubar = builder.get_object("menubar")
         self.set_menubar(menubar)
-        self.set_tray_icon(read_setting("show_tray_icon", default="false") == "true")
 
-    def set_tray_icon(self, active=False):
+    def set_tray_icon(self):
         """Creates or destroys a tray icon for the application"""
-        if self.tray:
-            self.tray.set_visible(active)
-        else:
+        active = settings.read_setting("show_tray_icon", default="false") == "true"
+        if active and not self.tray:
             self.tray = LutrisTray(application=self)
+        if self.tray:
             self.tray.set_visible(active)
 
     def do_activate(self):
@@ -243,9 +192,27 @@ class Application(Gtk.Application):
     def do_command_line(self, command_line):
         options = command_line.get_options_dict()
 
+        # Use stdout to output logs, only if no command line argument is
+        # provided
+        argc = len(sys.argv) - 1
+        if "-d" in sys.argv or "--debug" in sys.argv:
+            argc -= 1
+        if not argc:
+            # Switch back the log output to stderr (the default in Python)
+            # to avoid messing with any output from command line options.
+
+            # Use when targetting Python 3.7 minimum
+            # console_handler.setStream(sys.stderr)
+
+            # Until then...
+            logger.removeHandler(log.console_handler)
+            log.console_handler = logging.StreamHandler(stream=sys.stdout)
+            log.console_handler.setFormatter(log.SIMPLE_FORMATTER)
+            logger.addHandler(log.console_handler)
+
         # Set up logger
         if options.contains("debug"):
-            console_handler.setFormatter(DEBUG_FORMATTER)
+            log.console_handler.setFormatter(log.DEBUG_FORMATTER)
             logger.setLevel(logging.DEBUG)
 
         # Text only commands
@@ -253,7 +220,7 @@ class Application(Gtk.Application):
         # Print Lutris version and exit
         if options.contains("version"):
             executable_name = os.path.basename(sys.argv[0])
-            print(executable_name + "-" + VERSION)
+            print(executable_name + "-" + settings.VERSION)
             logger.setLevel(logging.NOTSET)
             return 0
 
@@ -303,6 +270,7 @@ class Application(Gtk.Application):
 
         # Graphical commands
         self.activate()
+        self.set_tray_icon()
 
         db_game = None
         if game_slug:
@@ -370,12 +338,23 @@ class Application(Gtk.Application):
         """Launch a Lutris game"""
         logger.debug("Adding game %s (%s) to running games", game, id(game))
         self.running_games.append(game)
+        game.connect("game-stop", self.on_game_stop)
         game.play()
 
     def get_game_by_id(self, game_id):
         for game in self.running_games:
             if game.id == game_id:
                 return game
+
+    def on_game_stop(self, game):
+        """Callback to remove the game from the running games"""
+        game_index = None
+        for i, running_game in enumerate(self.running_games):
+            if game is running_game:
+                game_index = i
+        if game_index is not None:
+            self.running_games.pop(game_index)
+        game.emit("game-stopped", game.id)
 
     @staticmethod
     def get_lutris_action(url):
