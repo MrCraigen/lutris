@@ -150,7 +150,11 @@ class RuntimeUpdater:
     @staticmethod
     def _iter_remote_runtimes():
         request = http.Request(RUNTIME_URL)
-        response = request.get()
+        try:
+            response = request.get()
+        except http.HTTPError as ex:
+            logger.error("Failed to get runtimes: %s", ex)
+            return
         runtimes = response.json or []
         for runtime in runtimes:
 
@@ -204,7 +208,11 @@ def get_env(version=None, prefer_system_libs=False, wine_path=None):
         for key, value in {
             "STEAM_RUNTIME": os.path.join(RUNTIME_DIR, "steam") if not RUNTIME_DISABLED else None,
             "LD_LIBRARY_PATH": ":".join(
-                get_paths(version=version, prefer_system_libs=prefer_system_libs, wine_path=wine_path)
+                get_paths(
+                    version=version,
+                    prefer_system_libs=prefer_system_libs,
+                    wine_path=wine_path
+                )
             ),
         }.items()
         if value
@@ -237,7 +245,7 @@ def get_runtime_paths(version=None, prefer_system_libs=True, wine_path=None):
     """Return Lutris runtime paths"""
     version = version or DEFAULT_RUNTIME
     if version.startswith("Ubuntu"):
-        lutris_runtime_path = "%s-i686"
+        lutris_runtime_path = "%s-i686" % version
     elif version == "legacy":
         lutris_runtime_path = "lib32"
     else:

@@ -8,14 +8,18 @@ import urllib.error
 import socket
 
 from lutris import settings
+from lutris.util import resources
 from lutris.util import http, system
 from lutris.util.log import logger
 
 
 API_KEY_FILE_PATH = os.path.join(settings.CACHE_DIR, "auth-token")
+USER_INFO_FILE_PATH = os.path.join(settings.CACHE_DIR, "user.json")
+USER_ICON_FILE_PATH = os.path.join(settings.CACHE_DIR, "user.png")
 
 
 def read_api_key():
+    """Read the API token from disk"""
     if not system.path_exists(API_KEY_FILE_PATH):
         return None
     with open(API_KEY_FILE_PATH, "r") as token_file:
@@ -25,6 +29,7 @@ def read_api_key():
 
 
 def connect(username, password):
+    """Connect to the Lutris API"""
     credentials = urllib.parse.urlencode(
         {"username": username, "password": password}
     ).encode("utf-8")
@@ -39,27 +44,42 @@ def connect(username, password):
         token = response["token"]
         with open(API_KEY_FILE_PATH, "w") as token_file:
             token_file.write(":".join((username, token)))
+        get_user_info()
         return response["token"]
     return False
 
 
 def disconnect():
-    if not system.path_exists(API_KEY_FILE_PATH):
-        return
-    os.remove(API_KEY_FILE_PATH)
+    """Removes the API token, disconnecting the user"""
+    for file_path in [API_KEY_FILE_PATH, USER_INFO_FILE_PATH, USER_ICON_FILE_PATH]:
+        if system.path_exists(file_path):
+            os.remove(file_path)
+
+
+def get_user_info():
+    """Retrieves the user info to cache it locally"""
+    credentials = read_api_key()
+    if not credentials:
+        return []
+    url = settings.SITE_URL + "/api/users/me"
+    request = http.Request(url, headers={"Authorization": "Token " + credentials["token"]})
+    response = request.get()
+    account_info = response.json
+    if not account_info:
+        logger.warning("Unable to fetch user info for %s", credentials["username"])
+    with open(USER_INFO_FILE_PATH, "w") as token_file:
+        json.dump(account_info, token_file, indent=2)
+    if account_info.get("avatar_url"):
+        resources.download_media(account_info["avatar_url"], USER_ICON_FILE_PATH)
 
 
 def get_library():
     """Return the remote library as a list of dicts."""
-    logger.debug("Fetching game library")
     credentials = read_api_key()
     if not credentials:
         return []
-    username = credentials["username"]
-    token = credentials["token"]
-    url = settings.SITE_URL + "/api/games/library/%s" % username
-    headers = {"Authorization": "Token " + token}
-    request = http.Request(url, headers=headers)
+    url = settings.SITE_URL + "/api/games/library/%s" % credentials["username"]
+    request = http.Request(url, headers={"Authorization": "Token " + credentials["token"]})
     response = request.get()
     response_data = response.json
     if response_data:
@@ -68,6 +88,7 @@ def get_library():
 
 
 def get_runners(runner_name):
+    """Return the available runners for a given runner name"""
     api_url = settings.SITE_URL + "/api/runners/" + runner_name
     response = http.Request(api_url).get()
     return response.json
@@ -92,7 +113,11 @@ def get_game_api_page(game_ids, page="1", query_type="games"):
         payload = json.dumps({query_type: game_ids, "page": page}).encode("utf-8")
     else:
         raise ValueError("No game id provided will fetch all games from the API")
-    response.get(data=payload)
+    try:
+        response.get(data=payload)
+    except http.HTTPError as ex:
+        logger.error("Unable to get games from API: %s", ex)
+        return None
     response_data = response.json
     logger.debug("Loaded %s games from page %s", len(response_data.get("results")), page)
 
@@ -105,6 +130,8 @@ def get_game_api_page(game_ids, page="1", query_type="games"):
 def get_api_games(game_slugs=None, page="1", query_type="games"):
     """Return all games from the Lutris API matching the given game slugs"""
     response_data = get_game_api_page(game_slugs, page=page, query_type=query_type)
+    if not response_data:
+        return []
     results = response_data.get("results", [])
     while response_data.get("next"):
         page_match = re.search(r"page=(\d+)", response_data["next"])
@@ -113,7 +140,6 @@ def get_api_games(game_slugs=None, page="1", query_type="games"):
         else:
             logger.error("No page found in %s", response_data["next"])
             break
-        logger.debug("Current page is %s, next page is %s", page, next_page)
         response_data = get_game_api_page(game_slugs, page=next_page, query_type=query_type)
         if not response_data.get("results"):
             logger.warning("Unable to get response for page %s", next_page)
@@ -121,3 +147,25 @@ def get_api_games(game_slugs=None, page="1", query_type="games"):
         else:
             results += response_data.get("results")
     return results
+
+
+def search_games(query):
+    query = query.lower().strip()[:32]
+    url = settings.SITE_URL + "/api/games?%s" % urllib.parse.urlencode({"search": query})
+    response = http.Request(url, headers={"Content-Type": "application/json"})
+    try:
+        response.get()
+    except http.HTTPError as ex:
+        logger.error("Unable to get games from API: %s", ex)
+        return None
+    response_data = response.json
+    api_games = response_data.get("results", [])
+    for index, game in enumerate(api_games, 1):
+        game["id"] = index * -1
+        game["installed"] = 1
+        game["runner"] = None
+        game["platform"] = None
+        game["lastplayed"] = None
+        game["installed_at"] = None
+        game["playtime"] = None
+    return api_games

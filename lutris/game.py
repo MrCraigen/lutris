@@ -35,9 +35,11 @@ class Game(GObject.Object):
     __gsignals__ = {
         "game-error": (GObject.SIGNAL_RUN_FIRST, None, (str,)),
         "game-start": (GObject.SIGNAL_RUN_FIRST, None, ()),
+        "game-started": (GObject.SIGNAL_RUN_FIRST, None, ()),
         "game-stop": (GObject.SIGNAL_RUN_FIRST, None, ()),
         "game-stopped": (GObject.SIGNAL_RUN_FIRST, None, (int,)),
         "game-removed": (GObject.SIGNAL_RUN_FIRST, None, (int,)),
+        "game-updated": (GObject.SIGNAL_RUN_FIRST, None, ()),
     }
 
     def __init__(self, game_id=None):
@@ -57,7 +59,6 @@ class Game(GObject.Object):
         self.platform = game_data.get("platform") or ""
         self.year = game_data.get("year") or ""
         self.lastplayed = game_data.get("lastplayed") or 0
-        self.playtime = game_data.get("playtime") or 0.0
         self.game_config_id = game_data.get("configpath") or ""
         self.steamid = game_data.get("steamid") or ""
         self.has_custom_banner = bool(game_data.get("has_custom_banner"))
@@ -67,7 +68,8 @@ class Game(GObject.Object):
         except ValueError:
             logger.error("Invalid playtime value %s", game_data.get("playtime"))
 
-        self.load_config()
+        if self.game_config_id:
+            self.load_config()
         self.game_thread = None
         self.prelaunch_executor = None
         self.heartbeat = None
@@ -99,6 +101,10 @@ class Game(GObject.Object):
         """Return a human readable formatted play time"""
         return strings.get_formatted_playtime(self.playtime)
 
+    @property
+    def is_search_result(self):
+        return self.id < 0
+
     @staticmethod
     def show_error_message(message):
         """Display an error message based on the runner's output."""
@@ -126,24 +132,24 @@ class Game(GObject.Object):
         """Return the path to open with the Browse Files action."""
         return self.runner.browse_dir
 
-    def load_config(self):
-        """Load the game's configuration."""
-        self.config = LutrisConfig(
-            runner_slug=self.runner_name, game_config_id=self.game_config_id
-        )
-        if not self.is_installed:
-            return
-        if not self.runner_name:
-            logger.error("Incomplete data for %s", self.slug)
-            return
+    def _get_runner(self):
+        """Return the runner instance for this game's configuration"""
         try:
             runner_class = import_runner(self.runner_name)
+            return runner_class(self.config)
         except InvalidRunner:
             logger.error(
                 "Unable to import runner %s for %s", self.runner_name, self.slug
             )
-        else:
-            self.runner = runner_class(self.config)
+
+    def load_config(self):
+        """Load the game's configuration."""
+        if not self.is_installed:
+            return
+        self.config = LutrisConfig(
+            runner_slug=self.runner_name, game_config_id=self.game_config_id
+        )
+        self.runner = self._get_runner()
 
     def set_desktop_compositing(self, enable):
         """Enables or disables compositing"""
@@ -172,7 +178,8 @@ class Game(GObject.Object):
             pga.delete_game(self.id)
         else:
             pga.set_uninstalled(self.id)
-        self.config.remove()
+        if self.config:
+            self.config.remove()
         xdgshortcuts.remove_launcher(self.slug, self.id, desktop=True, menu=True)
         self.emit("game-removed", self.id)
         return from_library
@@ -244,6 +251,7 @@ class Game(GObject.Object):
             self.emit('game-stop')
             return
 
+        self.emit("game-start")
         if hasattr(self.runner, "prelaunch"):
             logger.debug("Prelaunching %s", self.runner)
             try:
@@ -260,7 +268,6 @@ class Game(GObject.Object):
         """Get the game ready to start, applying all the options
         This methods sets the game_runtime_config attribute.
         """
-        self.timer.start()
 
         if error:
             logger.error(error)
@@ -277,12 +284,12 @@ class Game(GObject.Object):
         )
 
         gameplay_info = self.runner.play()
-        logger.debug("Launching %s: %s", self.name, gameplay_info)
         if "error" in gameplay_info:
             self.show_error_message(gameplay_info)
             self.state = self.STATE_STOPPED
             self.emit('game-stop')
             return
+        logger.debug("Launching %s: %s", self.name, gameplay_info)
         logger.debug("Game info: %s", json.dumps(gameplay_info, indent=2))
 
         env = {}
@@ -494,9 +501,17 @@ class Game(GObject.Object):
         if hasattr(self.runner, "stop"):
             self.game_thread.stop_func = self.runner.stop
         self.game_thread.start()
+        self.timer.start()
+        self.emit("game-started")
         self.state = self.STATE_RUNNING
-        self.emit("game-start")
         self.heartbeat = GLib.timeout_add(HEARTBEAT_DELAY, self.beat)
+
+    def stop_game(self):
+        self.state = self.STATE_STOPPED
+        self.emit('game-stop')
+        if not self.timer.finished:
+            self.timer.end()
+            self.playtime += self.timer.duration / 3600
 
     def xboxdrv_start(self, config):
         command = [
@@ -544,12 +559,6 @@ class Game(GObject.Object):
             return False
         return True
 
-    def stop_timer(self):
-        """Stops the timer"""
-        if not self.timer.finished:
-            self.timer.end()
-            self.playtime = (self.timer.duration + self.playtime) / 3600
-
     def stop(self):
         """Stops the game"""
         if self.state == self.STATE_STOPPED:
@@ -562,14 +571,10 @@ class Game(GObject.Object):
             self.xboxdrv_thread.stop()
         if self.game_thread:
             jobs.AsyncCall(self.game_thread.stop, None)
-        self.state = self.STATE_STOPPED
-        self.emit('game-stop')
-        self.stop_timer()
+        self.stop_game()
 
     def on_game_quit(self):
         """Restore some settings and cleanup after game quit."""
-
-        self.stop_timer()
 
         if self.prelaunch_executor and self.prelaunch_executor.is_running:
             logger.info("Stopping prelaunch script")
@@ -611,7 +616,6 @@ class Game(GObject.Object):
             display.restore_gamma()
 
         self.process_return_codes()
-        self.emit('game-stop')
         if self.exit_main_loop:
             exit()
 

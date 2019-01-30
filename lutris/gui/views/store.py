@@ -24,7 +24,7 @@ from . import (
     COL_INSTALLED_AT,
     COL_INSTALLED_AT_TEXT,
     COL_PLAYTIME,
-    COL_PLAYTIME_TEXT
+    COL_PLAYTIME_TEXT,
 )
 
 
@@ -43,11 +43,12 @@ class GameStore(GObject.Object):
         "platform": COL_PLATFORM,
         "lastplayed": COL_LASTPLAYED,
         "installed_at": COL_INSTALLED_AT,
-        "playtime": COL_PLAYTIME
+        "playtime": COL_PLAYTIME,
     }
 
     def __init__(
             self,
+            games,
             icon_type,
             filter_installed,
             sort_key,
@@ -55,7 +56,8 @@ class GameStore(GObject.Object):
             show_installed_first=False,
     ):
         super(GameStore, self).__init__()
-        self.games = pga.get_games(show_installed_first=show_installed_first)
+        self.games = games or []
+        self.search_mode = False
         self.games_to_refresh = set()
         self.icon_type = icon_type
         self.filter_installed = filter_installed
@@ -90,14 +92,10 @@ class GameStore(GObject.Object):
         self.modelsort = Gtk.TreeModelSort.sort_new_with_model(self.modelfilter)
         self.modelsort.connect("sort-column-changed", self.on_sort_column_changed)
         self.sort_view(sort_key, sort_ascending)
-        self.medias = {
-            "banner": {},
-            "icon": {}
-        }
+        self.medias = {"banner": {}, "icon": {}}
         self.media_loaded = False
-        self.connect('media-loaded', self.on_media_loaded)
-        self.connect('icon-loaded', self.on_icon_loaded)
-        AsyncCall(self.get_missing_media)
+        self.connect("media-loaded", self.on_media_loaded)
+        self.connect("icon-loaded", self.on_icon_loaded)
 
     def __str__(self):
         return (
@@ -105,7 +103,10 @@ class GameStore(GObject.Object):
             "filter_text: {filter_text}>".format(**self.__dict__)
         )
 
-    def load(self):
+    def load(self, from_search=False):
+        if not self.games:
+            return
+        self.search_mode = from_search
         self.add_games(self.games)
 
     @property
@@ -114,14 +115,10 @@ class GameStore(GObject.Object):
 
     def add_games(self, games):
         """Add games to the store"""
+        self.media_loaded = False
+        AsyncCall(self.get_missing_media, None, [game["slug"] for game in games])
         for game in list(games):
             GLib.idle_add(self.add_game, game)
-
-    def add_games_by_ids(self, game_ids):
-        self.media_loaded = False
-        games = pga.get_games_by_ids(game_ids)
-        AsyncCall(self.get_missing_media, None, [game["slug"] for game in games])
-        self.add_games(games)
 
     def has_icon(self, game_slug, media_type=None):
         """Return True if the game_slug has the icon of `icon_type`"""
@@ -134,9 +131,7 @@ class GameStore(GObject.Object):
         unavailable_banners = [
             slug for slug in slugs if not self.has_icon(slug, "banner")
         ]
-        unavailable_icons = [
-            slug for slug in slugs if not self.has_icon(slug, "icon")
-        ]
+        unavailable_icons = [slug for slug in slugs if not self.has_icon(slug, "icon")]
 
         # Remove duplicate slugs
         missing_media_slugs = list(set(unavailable_banners) | set(unavailable_icons))
@@ -161,7 +156,7 @@ class GameStore(GObject.Object):
         """Filter function for the game model"""
         if self.filter_installed:
             installed = model.get_value(_iter, COL_INSTALLED)
-            if not installed:
+            if not installed and not self.search_mode:
                 return False
         if self.filter_text:
             name = model.get_value(_iter, COL_NAME)
@@ -194,9 +189,23 @@ class GameStore(GObject.Object):
         self.prevent_sort_update = False
         self.emit("sorting-changed", key, ascending)
 
-    def get_row_by_id(self, game_id):
-        for model_row in self.store:
+    def get_row_by_id(self, game_id, filtered=False):
+        if filtered:
+            store = self.modelsort
+        else:
+            store = self.store
+        for model_row in store:
             if model_row[COL_ID] == int(game_id):
+                return model_row
+
+    def get_row_by_slug(self, slug):
+        """Return a row by its slug.
+        Requires slugs to be unique, thus only works for search mode
+        """
+        if not self.search_mode:
+            raise RuntimeError("get_row_by_slug can only be used with search_mode")
+        for model_row in self.store:
+            if model_row[COL_SLUG] == slug:
                 return model_row
 
     def remove_game(self, game_id):
@@ -214,11 +223,12 @@ class GameStore(GObject.Object):
         self.store.remove(row.iter)
 
     def update_game_by_id(self, game_id):
-        """Update game informations."""
-        game = pga.get_game_by_field(game_id, "id")
-        return self.update(game)
+        return self.update(
+            pga.get_game_by_field(game_id, "id")
+        )
 
     def update(self, pga_game):
+        """Update game informations."""
         game = PgaGame(pga_game)
         row = self.get_row_by_id(game.id)
         if not row:
@@ -242,35 +252,48 @@ class GameStore(GObject.Object):
             self.refresh_icon(game.slug)
 
     def refresh_icon(self, game_slug):
+        logger.debug("Getting icon for %s", game_slug)
         AsyncCall(self.fetch_icon, None, game_slug)
 
     def on_icon_loaded(self, _store, game_slug, media_type):
         if not self.has_icon(game_slug):
+            logger.warning("%s has not icon", game_slug)
             return
         if media_type != self.icon_type:
             return
-        for pga_game in pga.get_games_where(slug=game_slug):
+        if self.search_mode:
+            GLib.idle_add(self.update_icon, game_slug)
+            return
+        for pga_game in pga.get_games_by_slug(game_slug):
+            logger.debug("Updating %s", pga_game["id"])
             GLib.idle_add(self.update, pga_game)
+
+    def update_icon(self, game_slug):
+        row = self.get_row_by_slug(game_slug)
+        row[COL_ICON] = get_pixbuf_for_game(game_slug, self.icon_type, True)
 
     def fetch_icon(self, slug):
         if not self.media_loaded:
             self.games_to_refresh.add(slug)
             return
 
-        for media_type in ('banner', 'icon'):
+        for media_type in ("banner", "icon"):
             url = self.medias[media_type].get(slug)
             if url:
                 download_media(url, get_icon_path(slug, media_type))
-                self.emit('icon-loaded', slug, media_type)
+                self.emit("icon-loaded", slug, media_type)
 
     def on_media_loaded(self, response):
         for slug in self.games_to_refresh:
+            logger.debug("Refreshing %s", slug)
             self.refresh_icon(slug)
+
+    def add_games_by_ids(self, game_ids):
+        self.add_games(pga.get_games_by_ids(game_ids))
 
     def add_game_by_id(self, game_id):
         """Add a game into the store."""
-        game = pga.get_game_by_field(game_id, "id")
-        return self.add_game(game)
+        return self.add_games_by_ids([game_id])
 
     def add_game(self, pga_game):
         game = PgaGame(pga_game)
@@ -291,7 +314,7 @@ class GameStore(GObject.Object):
                 game.installed_at,
                 game.installed_at_text,
                 game.playtime,
-                game.playtime_text
+                game.playtime_text,
             )
         )
         if not self.has_icon(game.slug):
@@ -308,6 +331,8 @@ class GameStore(GObject.Object):
             self.icon_type = icon_type
             for row in self.store:
                 row[COL_ICON] = get_pixbuf_for_game(
-                    row[COL_SLUG], icon_type, is_installed=row[COL_INSTALLED]
+                    row[COL_SLUG],
+                    icon_type,
+                    is_installed=row[COL_INSTALLED] if not self.search_mode else True,
                 )
             self.emit("icons-changed", icon_type)

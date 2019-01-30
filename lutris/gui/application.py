@@ -31,23 +31,24 @@ gi.require_version("GnomeDesktop", "3.0")
 
 from gi.repository import Gio, GLib, Gtk
 from lutris import pga
+from lutris.game import Game
 from lutris import settings
 from lutris.gui.dialogs import ErrorDialog, InstallOrPlayDialog
 from lutris.gui.installerwindow import InstallerWindow
 from lutris.migrations import migrate
-from lutris.platforms import update_platforms
 from lutris.command import exec_command
 from lutris.util.steam.appmanifest import AppManifest, get_appmanifests
 from lutris.util.steam.config import get_steamapps_paths
 from lutris.util import datapath
 from lutris.util import log
+from lutris.util.jobs import AsyncCall
 from lutris.util.log import logger
 from lutris.util.resources import parse_installer_url
 from lutris.startup import run_all_checks
 from lutris.util.wine.dxvk import init_dxvk_versions
 
 from .lutriswindow import LutrisWindow
-from lutris.gui.lutristray import LutrisTray
+from lutris.gui.widgets.tray import LutrisTray
 
 
 class Application(Gtk.Application):
@@ -62,11 +63,10 @@ class Application(Gtk.Application):
 
         run_all_checks()
         migrate()
-        update_platforms()
-        init_dxvk_versions()
+        AsyncCall(init_dxvk_versions)
 
         GLib.set_application_name(_("Lutris"))
-        self.running_games = []
+        self.running_games = Gio.ListStore.new(Game)
         self.window = None
         self.tray = None
         self.css_provider = Gtk.CssProvider.new()
@@ -342,18 +342,22 @@ class Application(Gtk.Application):
         game.play()
 
     def get_game_by_id(self, game_id):
-        for game in self.running_games:
+        for i in range(self.running_games.get_n_items()):
+            game = self.running_games.get_item(i)
             if game.id == game_id:
                 return game
 
+    def get_game_index(self, game_id):
+        for i in range(self.running_games.get_n_items()):
+            game = self.running_games.get_item(i)
+            if game.id == game_id:
+                return i
+
     def on_game_stop(self, game):
         """Callback to remove the game from the running games"""
-        game_index = None
-        for i, running_game in enumerate(self.running_games):
-            if game is running_game:
-                game_index = i
+        game_index = self.get_game_index(game.id)
         if game_index is not None:
-            self.running_games.pop(game_index)
+            self.running_games.remove(game_index)
         game.emit("game-stopped", game.id)
 
     @staticmethod
