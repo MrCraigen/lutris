@@ -149,6 +149,15 @@ add-on "The reckoning" for Quake 2, you should add: ``requires: quake-2``
 You can also add complex requirements following the same syntax as the
 ``require-binaries`` directive described above.
 
+Accessing the current display mode
+----------------------------------
+
+It is often useful to have access to the current screen resolution to set
+launch parameters or write config files. You can access those in scripts with
+the `$RESOLUTION`, `$RESOLUTION_WIDTH` and `$RESOLUTION_HEIGHT` variables.
+
+Note that it is not necessary to specify the resolution for Wine virtual
+desktop as Lutris will automatically set it to the current one.
 
 Writing the installation script
 ===============================
@@ -235,9 +244,9 @@ Extracting archives
 -------------------
 
 Extracting archives is done with the ``extract`` directive, the ``file``
-argument is a ``file id`` or a file path. If the archive should be extracted
-in some other location than the ``$GAMEDIR``, you can specify a ``dst``
-argument.
+argument is a ``file id`` or a file path with optional wildcards. If the archive(s)
+should be extracted in some other location than the ``$GAMEDIR``, you can specify a
+``dst`` argument.
 
 You can optionally specify the archive's type with the ``format`` option.
 This is useful if the archive's file extension does not match what it should
@@ -445,32 +454,8 @@ Currently, the following tasks are implemented:
             name: winetricks
             prefix: $GAMEDIR
             app: nt40
-
-*   wine / winesteam: ``winecfg`` runs execute winecfg in your ``prefix`` argument. Parameters are
-    ``prefix`` (optional wineprefix path), ``arch`` (optional WINEARCH, required when you created win64 prefix),
-    ``config`` (dunno what is is).
-
-    example:
-
-    ::
-
-        - task:
-            name: winecfg
-            prefix: $GAMEDIR
-            config: config-file
-            arch: win64
-
-*   wine / winesteam: ``joycpl`` runs joycpl in your ``prefix`` argument. Parameters are
-    ``prefix`` (optional wineprefix path), ``arch`` (optional WINEARCH, required when you created win64 prefix).
-
-    example:
-
-    ::
-
-        - task:
-            name: joypl
-            prefix: $GAMEDIR
-            arch: win64
+            
+    For a full list of available ``winetricks`` see here: https://github.com/Winetricks/winetricks/tree/master/files/verbs
 
 *   wine / winesteam: ``eject_disk`` runs eject_disk in your ``prefix`` argument. parameters are
     ``prefix`` (optional wineprefix path).
@@ -482,18 +467,6 @@ Currently, the following tasks are implemented:
         - task:
             name: eject_disc
             prefix: $GAMEDIR
-
-*   wine / winesteam: ``disable_desktop_integration`` remove links to user directories in a ``prefix`` argument. parameters are
-    ``prefix`` (wineprefix path).
-
-    example:
-
-    ::
-
-        - task:
-            name: eject_disc
-            prefix: $GAMEDIR
-
 
 *   wine / winesteam: ``set_regedit`` Modifies the Windows registry. Parameters
     are ``path`` (the registry path, use backslashes), ``key``, ``value``,

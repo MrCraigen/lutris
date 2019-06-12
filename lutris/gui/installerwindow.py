@@ -6,14 +6,18 @@ from gi.repository import Gtk
 
 from lutris import api, pga, settings
 from lutris.installer import interpreter
-from lutris.installer.errors import ScriptingError
+from lutris.installer.errors import ScriptingError, MissingGameDependency
 from lutris.game import Game
 from lutris.gui.config.add_game import AddGameDialog
-from lutris.gui.dialogs import NoInstallerDialog, DirectoryDialog, InstallerSourceDialog
+from lutris.gui.dialogs import (
+    NoInstallerDialog, DirectoryDialog, InstallerSourceDialog, QuestionDialog
+)
 from lutris.gui.widgets.download_progress import DownloadProgressBox
 from lutris.gui.widgets.common import FileChooserEntry
 from lutris.gui.widgets.installer import InstallerPicker
 from lutris.gui.widgets.log_text_view import LogTextView
+from lutris.gui.widgets.window import BaseApplicationWindow
+
 from lutris.util import jobs
 from lutris.util import system
 from lutris.util import xdgshortcuts
@@ -21,12 +25,8 @@ from lutris.util.log import logger
 from lutris.util.strings import add_url_tags, escape_gtk_label
 
 
-class InstallerWindow(Gtk.ApplicationWindow):
+class InstallerWindow(BaseApplicationWindow):
     """GUI for the install process."""
-
-    game_dir = None
-    download_progress = None
-
     def __init__(
             self,
             game_slug=None,
@@ -35,9 +35,10 @@ class InstallerWindow(Gtk.ApplicationWindow):
             parent=None,
             application=None,
     ):
-        Gtk.ApplicationWindow.__init__(self, icon_name="lutris", application=application)
-        self.application = application
-        self.set_show_menubar(False)
+        super().__init__(application=application)
+
+        self.download_progress = None
+        self.install_in_progress = False
         self.interpreter = None
         self.selected_directory = None  # Latest directory chosen by user
         self.parent = parent
@@ -48,24 +49,6 @@ class InstallerWindow(Gtk.ApplicationWindow):
         self.log_buffer = None
         self.log_textview = None
 
-        # Dialog properties
-        self.set_size_request(420, 420)
-        self.set_default_size(600, 480)
-        self.set_position(Gtk.WindowPosition.CENTER)
-
-        self.vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        self.vbox.set_margin_top(18)
-        self.vbox.set_margin_bottom(18)
-        self.vbox.set_margin_right(18)
-        self.vbox.set_margin_left(18)
-        self.add(self.vbox)
-
-        # Default signals
-        self.connect("destroy", self.on_destroy)
-
-        # GUI Setup
-
-        # Title label
         self.title_label = Gtk.Label()
         self.vbox.add(self.title_label)
 
@@ -75,43 +58,34 @@ class InstallerWindow(Gtk.ApplicationWindow):
         self.status_label.set_selectable(True)
         self.vbox.add(self.status_label)
 
-        # Main widget box
         self.widget_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.vbox.pack_start(self.widget_box, True, True, 0)
 
         self.location_entry = None
 
-        # Separator
         self.vbox.add(Gtk.HSeparator())
 
-        # Buttons
-
         self.action_buttons = Gtk.Box(spacing=6)
-        # self.action_buttons.set_margin_top(18)
         action_buttons_alignment = Gtk.Alignment.new(1, 0, 0, 0)
         action_buttons_alignment.add(self.action_buttons)
         self.vbox.pack_start(action_buttons_alignment, False, True, 0)
 
         self.cancel_button = Gtk.Button.new_with_mnemonic("C_ancel")
         self.cancel_button.set_tooltip_text("Abort and revert the " "installation")
-        self.cancel_button.connect("clicked", self.on_cancel_clicked)
+        self.cancel_button.connect("clicked", self.cancel_installation)
         self.action_buttons.add(self.cancel_button)
 
         self.eject_button = self.add_button("_Eject", self.on_eject_clicked)
         self.source_button = self.add_button("_View source", self.on_source_clicked)
         self.install_button = self.add_button("_Install", self.on_install_clicked)
         self.continue_button = self.add_button("_Continue")
-        self.play_button = self.add_button("_Launch game", self.launch_game)
-        self.close_button = self.add_button("_Close", self.close)
+        self.play_button = self.add_button("_Launch", self.launch_game)
+        self.close_button = self.add_button("_Close", self.on_destroy)
 
         self.continue_handler = None
 
         self.get_scripts()
 
-        # l33t haxx to make Window.present() actually work.
-        self.set_keep_above(True)
-        self.present()
-        self.set_keep_above(False)
         self.present()
 
     def add_button(self, label, handler=None):
@@ -120,10 +94,6 @@ class InstallerWindow(Gtk.ApplicationWindow):
             button.connect("clicked", handler)
         self.action_buttons.add(button)
         return button
-
-    # ---------------------------
-    # "Get installer" stage
-    # ---------------------------
 
     def get_scripts(self):
         if system.path_exists(self.installer_file):
@@ -153,6 +123,7 @@ class InstallerWindow(Gtk.ApplicationWindow):
         self.source_button.hide()
         self.eject_button.hide()
         self.continue_button.hide()
+        self.install_in_progress = True
 
         self.choose_installer()
 
@@ -185,9 +156,6 @@ class InstallerWindow(Gtk.ApplicationWindow):
         elif dlg.result == dlg.NEW_INSTALLER:
             webbrowser.open(settings.GAME_URL % self.game_slug)
 
-    # ---------------------------
-    # "Choose installer" stage
-    # ---------------------------
     def validate_scripts(self):
         """Auto-fixes some script aspects and checks for mandatory fields"""
         for script in self.scripts:
@@ -202,15 +170,15 @@ class InstallerWindow(Gtk.ApplicationWindow):
         """Stage where we choose an install script."""
         self.validate_scripts()
         base_script = self.scripts[0]
-        self.title_label.set_markup("<b>Install %s</b>" % base_script["name"])
+        self.title_label.set_markup("<b>Install %s</b>" % escape_gtk_label(base_script["name"]))
         installer_picker = InstallerPicker(self.scripts)
         installer_picker.connect("installer-selected", self.on_installer_selected)
-        self.widget_box.pack_start(installer_picker, False, False, 0)
-
-    def on_installer_selected(self, widget, installer_slug):
-        self.clean_widgets()
-        self.prepare_install(installer_slug)
-        self.show_non_empty_warning()
+        scrolledwindow = Gtk.ScrolledWindow(
+            hexpand=True, vexpand=True, child=installer_picker
+        )
+        scrolledwindow.set_shadow_type(Gtk.ShadowType.ETCHED_IN)
+        self.widget_box.pack_end(scrolledwindow, True, True, 10)
+        scrolledwindow.show()
 
     def prepare_install(self, script_slug):
         install_script = None
@@ -219,7 +187,24 @@ class InstallerWindow(Gtk.ApplicationWindow):
                 install_script = script
         if not install_script:
             raise ValueError("Could not find script %s" % script_slug)
-        self.interpreter = interpreter.ScriptInterpreter(install_script, self)
+        try:
+            self.interpreter = interpreter.ScriptInterpreter(install_script, self)
+        except MissingGameDependency as ex:
+            dlg = QuestionDialog(
+                {
+                    "question": "This game requires %s. Do you want to install it?" % ex.slug,
+                    "title": "Missing dependency",
+                }
+            )
+            if dlg.result == Gtk.ResponseType.YES:
+                InstallerWindow(
+                    game_slug=ex.slug,
+                    parent=self.parent,
+                    application=self.application,
+                )
+            self.destroy()
+            return
+
         self.title_label.set_markup(
             u"<b>Installing {}</b>".format(
                 escape_gtk_label(self.interpreter.game_name)
@@ -227,22 +212,13 @@ class InstallerWindow(Gtk.ApplicationWindow):
         )
         self.select_install_folder()
 
-    # --------------------------
-    # "Select install dir" stage
-    # --------------------------
-
     def select_install_folder(self):
         """Stage where we select the install directory."""
         if self.interpreter.creates_game_folder:
             self.set_message("Select installation directory")
             default_path = self.interpreter.get_default_target()
             self.set_path_chooser(self.on_target_changed, "folder", default_path)
-            self.non_empty_label = Gtk.Label()
-            self.non_empty_label.set_markup(
-                "<b>Warning!</b> The selected path "
-                "contains files, installation might not work properly."
-            )
-            self.widget_box.pack_start(self.non_empty_label, False, False, 10)
+
         else:
             self.set_message("Click install to continue")
         if self.continue_handler:
@@ -252,29 +228,13 @@ class InstallerWindow(Gtk.ApplicationWindow):
         self.install_button.grab_focus()
         self.install_button.show()
 
-    def on_target_changed(self, text_entry, _):
+    def on_installer_selected(self, widget, installer_slug):
+        self.clean_widgets()
+        self.prepare_install(installer_slug)
+
+    def on_target_changed(self, text_entry, _data):
         """Set the installation target for the game."""
-        path = text_entry.get_text()
-        self.interpreter.target_path = os.path.expanduser(path)
-        self.show_non_empty_warning()
-
-    def show_non_empty_warning(self):
-        """Display a warning if destination folder is not empty."""
-        if not self.location_entry:
-            return
-        path = self.location_entry.get_text()
-
-        # replace ~ with full path so os.path.exists and os.listdir work correctly
-        path = os.path.expanduser(path)
-
-        if os.path.exists(path) and os.listdir(path):
-            self.non_empty_label.show()
-        else:
-            self.non_empty_label.hide()
-
-    # ---------------------
-    # "Get the files" stage
-    # ---------------------
+        self.interpreter.target_path = os.path.expanduser(text_entry.get_text())
 
     def on_install_clicked(self, button):
         """Let the interpreter take charge of the next stages."""
@@ -285,30 +245,29 @@ class InstallerWindow(Gtk.ApplicationWindow):
     def ask_user_for_file(self, message):
         self.clean_widgets()
         self.set_message(message)
-        if self.selected_directory:
-            path = self.selected_directory
-        else:
-            path = os.path.expanduser("~")
-        self.set_path_chooser(self.continue_guard, "file", default_path=path)
+        path = self.selected_directory or os.path.expanduser("~")
+        self.set_path_chooser(
+            self.continue_guard,
+            "file",
+            default_path=path
+        )
 
     def continue_guard(self, _, action):
-
-        loc = self.location_entry.get_text()
-        loc = os.path.expanduser(loc)
-        if (action == Gtk.FileChooserAction.OPEN and os.path.isfile(loc)) or (
-            action == Gtk.FileChooserAction.SELECT_FOLDER and os.path.isdir(loc)
+        """This is weird and needs to be explained."""
+        path = os.path.expanduser(self.location_entry.get_text())
+        if (
+                action == Gtk.FileChooserAction.OPEN and os.path.isfile(path)
+        ) or (
+                action == Gtk.FileChooserAction.SELECT_FOLDER and os.path.isdir(path)
         ):
-
             self.continue_button.set_sensitive(True)
             self.continue_button.connect("clicked", self.on_file_selected)
             self.continue_button.grab_focus()
-
         else:
             self.continue_button.set_sensitive(False)
 
     def set_path_chooser(self, callback_on_changed, action=None, default_path=None):
         """Display a file/folder chooser."""
-
         self.install_button.set_visible(False)
         self.continue_button.show()
         self.continue_button.set_sensitive(False)
@@ -316,17 +275,24 @@ class InstallerWindow(Gtk.ApplicationWindow):
         if action == "file":
             title = "Select file"
             action = Gtk.FileChooserAction.OPEN
+            enable_warnings = False
         elif action == "folder":
             title = "Select folder"
             action = Gtk.FileChooserAction.SELECT_FOLDER
+            enable_warnings = True
+        else:
+            raise ValueError("Invalid action %s", action)
 
         if self.location_entry:
             self.location_entry.destroy()
-        self.location_entry = FileChooserEntry(title, action, default_path)
-        self.location_entry.show_all()
-        if callback_on_changed:
-            self.location_entry.entry.connect("changed", callback_on_changed, action)
-
+        self.location_entry = FileChooserEntry(
+            title,
+            action,
+            path=default_path,
+            warn_if_non_empty=enable_warnings,
+            warn_if_ntfs=enable_warnings
+        )
+        self.location_entry.entry.connect("changed", callback_on_changed, action)
         self.widget_box.pack_start(self.location_entry, False, False, 0)
 
     def on_file_selected(self, widget):
@@ -364,10 +330,6 @@ class InstallerWindow(Gtk.ApplicationWindow):
 
         self.interpreter.abort_current_task = None
         self.interpreter.iter_game_files()
-
-    # ----------------
-    # "Commands" stage
-    # ----------------
 
     def ask_for_disc(self, message, callback, requires):
         """Ask the user to do insert a CD-ROM."""
@@ -437,19 +399,13 @@ class InstallerWindow(Gtk.ApplicationWindow):
         self.on_input_menu_changed(combobox)
 
     def on_input_menu_changed(self, widget):
-        # Enable continue button if a non-empty choice is selected
+        """Enable continue button if a non-empty choice is selected"""
         self.continue_button.set_sensitive(bool(widget.get_active_id()))
 
-    # ----------------
-    # "Finalize" stage
-    # ----------------
-
     def on_install_finished(self):
-        """Actual game installation."""
-        self.notify_install_success()
         self.clean_widgets()
+        self.install_in_progress = False
 
-        # Shortcut checkboxes
         self.desktop_shortcut_box = Gtk.CheckButton("Create desktop shortcut")
         self.menu_shortcut_box = Gtk.CheckButton("Create application menu " "shortcut")
         self.widget_box.pack_start(self.desktop_shortcut_box, False, False, 5)
@@ -461,9 +417,8 @@ class InstallerWindow(Gtk.ApplicationWindow):
         if settings.read_setting("create_menu_shortcut") == "True":
             self.menu_shortcut_box.set_active(True)
 
-        self.connect("destroy", self.create_shortcuts)
+        self.connect("delete-event", self.create_shortcuts)
 
-        # Buttons
         self.eject_button.hide()
         self.cancel_button.hide()
         self.continue_button.hide()
@@ -476,16 +431,6 @@ class InstallerWindow(Gtk.ApplicationWindow):
             self.set_urgency_hint(True)  # Blink in taskbar
             self.connect("focus-in-event", self.on_window_focus)
 
-    def notify_install_success(self, game_id=None):
-
-        # Nothing to notify in case of extends scripts
-        if self.interpreter.extends:
-            return
-
-        game_id = game_id or self.interpreter.game_id
-        if self.parent:
-            self.parent.view.emit("game-installed", game_id)
-
     def on_window_focus(self, widget, *args):
         self.set_urgency_hint(False)
 
@@ -494,24 +439,22 @@ class InstallerWindow(Gtk.ApplicationWindow):
         self.clean_widgets()
         self.cancel_button.grab_focus()
 
-    # --------------------
-    # "Afer the end" stage
-    # --------------------
-
     def launch_game(self, widget, _data=None):
         """Launch a game after it's been installed."""
         widget.set_sensitive(False)
-        self.close(widget)
+        self.on_destroy(widget)
         self.application.launch(Game(self.interpreter.game_id))
 
-    def close(self, _widget):
-        self.destroy()
-
-    def on_destroy(self, widget):
+    def on_destroy(self, _widget, _data=None):
         """destroy event handler"""
-        if self.interpreter:
-            self.interpreter.cleanup()
-        self.destroy()
+        if self.install_in_progress:
+            abort_close = self.cancel_installation()
+            if abort_close:
+                return True
+        else:
+            if self.interpreter:
+                self.interpreter.cleanup()
+            self.destroy()
 
     def create_shortcuts(self, *args):
         """Create desktop and global menu shortcuts."""
@@ -529,27 +472,28 @@ class InstallerWindow(Gtk.ApplicationWindow):
         settings.write_setting("create_desktop_shortcut", create_desktop_shortcut)
         settings.write_setting("create_menu_shortcut", create_menu_shortcut)
 
-    # --------------
-    # Cancel install
-    # --------------
-
-    def on_cancel_clicked(self, _button):
+    def cancel_installation(self, widget=None):
+        """Ask a confirmation before cancelling the install"""
+        confirm_cancel_dialog = QuestionDialog(
+            {
+                "question": "Are you sure you want to cancel the installation?",
+                "title": "Cancel installation?",
+            }
+        )
+        if confirm_cancel_dialog.result != Gtk.ResponseType.YES:
+            logger.warning("Attempting to terminate with the system wineserver. "
+                           "This is most likely to fail or to have no effect.")
+            system.execute([system.find_executable("wineserver"), "-k9"])
+            return True
         if self.interpreter:
             self.interpreter.revert()
+            self.interpreter.cleanup()
         self.destroy()
-
-    # -------------
-    # View Source
-    # -------------
 
     def on_source_clicked(self, _button):
         InstallerSourceDialog(
             self.interpreter.script_pretty, self.interpreter.game_name, self
         )
-
-    # -------------
-    # Utility stuff
-    # -------------
 
     def clean_widgets(self):
         """Cleanup before displaying the next stage."""

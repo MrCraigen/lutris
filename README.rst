@@ -2,6 +2,10 @@
 Lutris
 ******
 
+|LiberaPayBadge|_
+
+
+
 Lutris is an open source gaming platform that makes gaming on Linux easier by
 managing, installing and providing optimal settings for games.
 
@@ -41,8 +45,7 @@ Configuration files
 
 * ``~/.config/lutris``: The client, runners, and game configuration files
 
-   * There is be no need to manually edit these files as everything should
-be done from the client.
+   There is be no need to manually edit these files as everything should be done from the client.
 
 * ``lutris.conf``: Preferences for the client's UI
 
@@ -52,20 +55,19 @@ be done from the client.
 
 * ``games/*.yml``: Game-specific configurations
 
-Game-specific configurations supersede runner-specific configurations, which in
-turn supersede the system configuration.
+Game-specific configurations overwrite runner-specific configurations, which in
+turn overwrite the system configuration.
 
 Runners and the game database
 =============================
 
 ``~/.local/share/lutris``: All data necessary to manage Lutris' library and games, including:
 
-* ``pga.db``: An SQLite database tracking the game library, game installation
-status, various file locations, and some additional metadata
+* ``pga.db``: An SQLite database tracking the game library, game installation status, various file locations, and some additional metadata
 
-``runners/*``: Runners downloaded from `lutris.net <https://lutris.net>`_
+* ``runners/*``: Runners downloaded from `lutris.net <https://lutris.net>`_
 
-``icons/*.png`` and ``banners/*.jpg``: Game banners and icons
+* ``icons/*.png`` and ``banners/*.jpg``: Game banners and icons
 
 Command line options
 ====================
@@ -122,8 +124,11 @@ pre-releases, or simply chat with the developers?
 
 You can always reach us on:
 
-* Discord: #lutris_support and #lutris_dev on the LGG server: https://discord.gg/C3uJjRD
+* Discord: https://discordapp.com/invite/Pnt5CuY
 * IRC: #lutris on the Freenode servers
 * Github: https://github.com/lutris
 * Twitter: https://twitter.com/LutrisGaming
-* Google+: https://plus.google.com/+LutrisNet
+
+
+.. |LiberaPayBadge| image:: http://img.shields.io/liberapay/receives/Lutris.svg?logo=liberapay
+.. _LiberaPayBadge: https://liberapay.com/Lutris/

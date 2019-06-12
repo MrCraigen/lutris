@@ -49,17 +49,6 @@ def sync_game_details(remote_library):
         if local_game["updated"] and remote_game["updated"] > local_game["updated"]:
             # The remote game's info is more recent than the local game
             sync_required = True
-        else:
-            for key in remote_game.keys():
-                if (
-                        key in local_game.keys()
-                        and remote_game[key]
-                        and not local_game[key]
-                ):
-                    # Remote game has data that is missing from the local game.
-                    logger.info("Key %s is not present, forcing update", key)
-                    sync_required = True
-                    break
 
         if not sync_required:
             continue
@@ -77,10 +66,10 @@ def sync_game_details(remote_library):
         updated.add(game_id)
 
         if not local_game.get("has_custom_banner") and remote_game["banner_url"]:
-            path = resources.get_icon_path(slug, resources.BANNER)
+            path = resources.get_banner_path(slug)
             resources.download_media(remote_game["banner_url"], path, overwrite=True)
         if not local_game.get("has_custom_icon") and remote_game["icon_url"]:
-            path = resources.get_icon_path(slug, resources.ICON)
+            path = resources.get_icon_path(slug)
             resources.download_media(remote_game["icon_url"], path, overwrite=True)
 
     if updated:

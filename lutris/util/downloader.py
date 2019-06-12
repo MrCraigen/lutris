@@ -86,8 +86,9 @@ class Downloader:
             logger.error("Download failed: %s", error)
             self.state = self.ERROR
             self.error = error
-            self.file_pointer.close()
-            self.file_pointer = None
+            if self.file_pointer:
+                self.file_pointer.close()
+                self.file_pointer = None
             return
 
         if self.state == self.CANCELLED:
@@ -111,7 +112,7 @@ class Downloader:
         if self.referer:
             headers["Referer"] = self.referer
         response = requests.get(self.url, headers=headers, stream=True)
-        self.full_size = int(response.headers.get("Content-Length").strip())
+        self.full_size = int(response.headers.get("Content-Length", "").strip() or 0)
         for chunk in response.iter_content(chunk_size=1024 * 1024):
             if not self.file_pointer:
                 break

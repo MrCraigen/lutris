@@ -1,9 +1,11 @@
 """Store object for a list of games"""
+# pylint: disable=not-an-iterable
+import concurrent.futures
 from gi.repository import Gtk, GObject, GLib
 from gi.repository.GdkPixbuf import Pixbuf
 from lutris import pga
 from lutris.gui.widgets.utils import get_pixbuf_for_game
-from lutris.util.resources import get_icon_path, download_media
+from lutris.util.resources import get_icon_path, download_media, update_desktop_icons
 from lutris.util.log import logger
 from lutris.util import system
 from lutris import api
@@ -26,6 +28,43 @@ from . import (
     COL_PLAYTIME,
     COL_PLAYTIME_TEXT,
 )
+
+
+def try_lower(value):
+    try:
+        out = value.lower()
+    except AttributeError:
+        out = value
+    return out
+
+
+def sort_func(model, row1, row2, sort_col):
+    """Sorting function for the GameStore"""
+    value1 = model.get_value(row1, sort_col)
+    value2 = model.get_value(row2, sort_col)
+    if value1 is None and value2 is None:
+        value1 = value2 = 0
+    elif value1 is None:
+        value1 = type(value2)()
+    elif value2 is None:
+        value2 = type(value1)()
+    value1 = try_lower(value1)
+    value2 = try_lower(value2)
+    diff = -1 if value1 < value2 else 0 if value1 == value2 else 1
+    if diff == 0:
+        value1 = try_lower(model.get_value(row1, COL_NAME))
+        value2 = try_lower(model.get_value(row2, COL_NAME))
+        try:
+            diff = -1 if value1 < value2 else 0 if value1 == value2 else 1
+        except TypeError:
+            diff = 0
+    if diff == 0:
+        value1 = try_lower(model.get_value(row1, COL_RUNNER_HUMAN_NAME))
+        value2 = try_lower(model.get_value(row2, COL_RUNNER_HUMAN_NAME))
+    try:
+        return -1 if value1 < value2 else 0 if value1 == value2 else 1
+    except TypeError:
+        return 0
 
 
 class GameStore(GObject.Object):
@@ -82,17 +121,22 @@ class GameStore(GObject.Object):
             str,
             str,
         )
+        sort_col = COL_NAME
         if show_installed_first:
-            self.store.set_sort_column_id(COL_INSTALLED, Gtk.SortType.DESCENDING)
+            sort_col = COL_INSTALLED
+            self.store.set_sort_column_id(sort_col, Gtk.SortType.DESCENDING)
         else:
-            self.store.set_sort_column_id(COL_NAME, Gtk.SortType.ASCENDING)
+            self.store.set_sort_column_id(sort_col, Gtk.SortType.ASCENDING)
         self.prevent_sort_update = False  # prevent recursion with signals
         self.modelfilter = self.store.filter_new()
         self.modelfilter.set_visible_func(self.filter_view)
         self.modelsort = Gtk.TreeModelSort.sort_new_with_model(self.modelfilter)
         self.modelsort.connect("sort-column-changed", self.on_sort_column_changed)
+        self.modelsort.set_sort_func(sort_col, sort_func, sort_col)
         self.sort_view(sort_key, sort_ascending)
         self.medias = {"banner": {}, "icon": {}}
+        self.banner_misses = set()
+        self.icon_misses = set()
         self.media_loaded = False
         self.connect("media-loaded", self.on_media_loaded)
         self.connect("icon-loaded", self.on_icon_loaded)
@@ -116,7 +160,8 @@ class GameStore(GObject.Object):
     def add_games(self, games):
         """Add games to the store"""
         self.media_loaded = False
-        AsyncCall(self.get_missing_media, None, [game["slug"] for game in games])
+        if games:
+            AsyncCall(self.get_missing_media, None, [game["slug"] for game in games])
         for game in list(games):
             GLib.idle_add(self.add_game, game)
 
@@ -128,32 +173,51 @@ class GameStore(GObject.Object):
     def get_missing_media(self, slugs=None):
         """Query the Lutris.net API for missing icons"""
         slugs = slugs or self.game_slugs
-        unavailable_banners = [
-            slug for slug in slugs if not self.has_icon(slug, "banner")
-        ]
-        unavailable_icons = [slug for slug in slugs if not self.has_icon(slug, "icon")]
+        unavailable_banners = {
+            slug for slug in slugs
+            if not self.has_icon(slug, "banner")
+        }
+        unavailable_icons = {
+            slug for slug in slugs
+            if not self.has_icon(slug, "icon")
+        }
 
         # Remove duplicate slugs
-        missing_media_slugs = list(set(unavailable_banners) | set(unavailable_icons))
+        missing_media_slugs = (
+            (unavailable_banners - self.banner_misses)
+            | (unavailable_icons - self.icon_misses)
+        )
         if not missing_media_slugs:
             return
-        logger.debug(
-            "Requesting missing icons from API for %d games", len(missing_media_slugs)
-        )
-        lutris_media = api.get_api_games(missing_media_slugs)
+        if len(missing_media_slugs) > 10:
+            logger.debug(
+                "Requesting missing icons from API for %d games", len(missing_media_slugs)
+            )
+        else:
+            logger.debug(
+                "Requesting missing icons from API for %s", ", ".join(missing_media_slugs)
+            )
+
+        lutris_media = api.get_api_games(list(missing_media_slugs), inject_aliases=True)
         if not lutris_media:
             return
 
         for game in lutris_media:
             if game["slug"] in unavailable_banners and game["banner_url"]:
                 self.medias["banner"][game["slug"]] = game["banner_url"]
+                unavailable_banners.remove(game["slug"])
             if game["slug"] in unavailable_icons and game["icon_url"]:
                 self.medias["icon"][game["slug"]] = game["icon_url"]
+                unavailable_icons.remove(game["slug"])
+        self.banner_misses = unavailable_banners
+        self.icon_misses = unavailable_icons
         self.media_loaded = True
         self.emit("media-loaded")
 
-    def filter_view(self, model, _iter, filter_data=None):
+    def filter_view(self, model, _iter, _filter_data=None):
         """Filter function for the game model"""
+        if self.search_mode:
+            return True
         if self.filter_installed:
             installed = model.get_value(_iter, COL_INSTALLED)
             if not installed and not self.search_mode:
@@ -185,6 +249,8 @@ class GameStore(GObject.Object):
         key = next((c for c, k in self.sort_columns.items() if k == col), None)
         ascending = direction == Gtk.SortType.ASCENDING
         self.prevent_sort_update = True
+        if not key:
+            raise ValueError("Invalid sort key for col %s" % col)
         self.sort_view(key, ascending)
         self.prevent_sort_update = False
         self.emit("sorting-changed", key, ascending)
@@ -220,17 +286,22 @@ class GameStore(GObject.Object):
         else:
             logger.warning("Can't find game %s in game list", game_id)
         row = self.get_row_by_id(game_id)
-        self.store.remove(row.iter)
+        if row:
+            self.store.remove(row.iter)
 
     def update_game_by_id(self, game_id):
-        return self.update(
-            pga.get_game_by_field(game_id, "id")
-        )
+        pga_game = pga.get_game_by_field(game_id, "id")
+        if pga_game:
+            return self.update(pga_game)
+        return self.remove_game(game_id)
 
     def update(self, pga_game):
         """Update game informations."""
         game = PgaGame(pga_game)
-        row = self.get_row_by_id(game.id)
+        if self.search_mode:
+            row = self.get_row_by_slug(game.slug)
+        else:
+            row = self.get_row_by_id(game.id)
         if not row:
             raise ValueError("No existing row for game %s" % game.slug)
         row[COL_ID] = game.id
@@ -252,12 +323,11 @@ class GameStore(GObject.Object):
             self.refresh_icon(game.slug)
 
     def refresh_icon(self, game_slug):
-        logger.debug("Getting icon for %s", game_slug)
         AsyncCall(self.fetch_icon, None, game_slug)
 
     def on_icon_loaded(self, _store, game_slug, media_type):
         if not self.has_icon(game_slug):
-            logger.warning("%s has not icon", game_slug)
+            logger.debug("%s has no %s", game_slug, media_type)
             return
         if media_type != self.icon_type:
             return
@@ -280,13 +350,44 @@ class GameStore(GObject.Object):
         for media_type in ("banner", "icon"):
             url = self.medias[media_type].get(slug)
             if url:
+                logger.debug("Getting %s for %s: %s", media_type, slug, url)
                 download_media(url, get_icon_path(slug, media_type))
                 self.emit("icon-loaded", slug, media_type)
 
-    def on_media_loaded(self, response):
-        for slug in self.games_to_refresh:
-            logger.debug("Refreshing %s", slug)
-            self.refresh_icon(slug)
+    def on_media_loaded(self, _response):
+        """Callback to handle a response from the API with the new media"""
+        if not self.medias:
+            return
+        for media_type in ("banner", "icon"):
+            self.download_icons([
+                (slug, self.medias[media_type][slug], get_icon_path(slug, media_type))
+                for slug in self.medias[media_type]
+            ], media_type)
+
+    def download_icons(self, downloads, media_type):
+        """Download a list of media files concurrently.
+
+        Limits the number of simultaneous downloads to avoid API throttling
+        and UI being overloaded with signals.
+        """
+        if not downloads:
+            return
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            future_downloads = {
+                executor.submit(download_media, url, dest_path): slug
+                for slug, url, dest_path in downloads
+            }
+            for future in concurrent.futures.as_completed(future_downloads):
+                slug = future_downloads[future]
+                try:
+                    future.result()
+                except Exception as ex:  # pylint: disable=broad-except
+                    logger.exception('%r failed: %s', slug, ex)
+                else:
+                    self.emit("icon-loaded", slug, media_type)
+        if media_type == "icon":
+            update_desktop_icons()
 
     def add_games_by_ids(self, game_ids):
         self.add_games(pga.get_games_by_ids(game_ids))

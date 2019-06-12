@@ -1,8 +1,108 @@
-lutris (0.50rc1) cosmic; urgency=medium
+lutris (0.5.2.1) cosmic; urgency=high
 
-  * TODO
+  * Handle distributions where ldconfig is not in $PATH, like Debian
+  * Fix a crash when GOG credential have changed
+  * Leave "Show logs" button always enabled
+  * Add BlastEm to libretro cores
 
- -- Mathieu Comandon <strycore@gmail.com>  Fri, 04 Jan 2019 09:08:25 -0800
+ -- Mathieu Comandon <strycore@gmail.com>  Tue, 09 Apr 2019 19:46:02 -0700
+
+lutris (0.5.2) cosmic; urgency=medium
+
+  * Avoid a crash if the lutris config file is corrupted
+  * Install Asian fonts by default on Wine prefix creation
+  * Add Vulkan ICD loaders in system options
+  * Add SampleCount option to Wine (allows enabling antialiasing in old games)
+  * Replace joystick panel with Wine config panel (which contains the joypad panel)
+  * Display warning when installing games on NTFS drives
+  * Display warning if Vulkan is not fully installed
+  * Use ldconfig to determine library paths
+  * Disable steamwebhelper in Wine Steam to prevent spamming logs with errors
+  * Various bug fixes
+
+ -- Mathieu Comandon <strycore@gmail.com>  Thu, 04 Apr 2019 02:47:30 -0700
+
+lutris (0.5.1.3) cosmic; urgency=critical
+
+  * Fake release to work around Launchpad / OBS publishing issues.
+
+ -- Mathieu Comandon <strycore@gmail.com>  Mon, 25 Mar 2019 17:38:55 -0700
+
+lutris (0.5.1.2) cosmic; urgency=high
+
+  * Fix issue with custom Proton detection preventing Wine game from running
+
+ -- Mathieu Comandon <strycore@gmail.com>  Mon, 25 Mar 2019 14:24:38 -0700
+
+lutris (0.5.1.1) cosmic; urgency=medium
+
+  * Fixed a crash when trying to open webpages on system without GVFS
+    installed
+  * Fixed GOG login dialog being displayed multiple times during the install
+  * Add mesa-utils as dependency for glxinfo
+  * Add gvfs-backends as dependency to fix the open_uri issue
+  * Add detection of custom proton builds in compatibilitytools.d folder, as
+    documented here: https://github.com/valvesoftware/proton#install-proton-locally
+   (by @GloriousEggroll)
+
+ -- Mathieu Comandon <strycore@gmail.com>  Sun, 24 Mar 2019 23:39:18 -0700
+
+lutris (0.5.1) cosmic; urgency=medium
+
+  * Download the default Lutris Wine version when not available
+  * Prevent duplicates when importing games from 3rd party services
+  * Fix some sorting issues in the view
+  * Add issue reporting feature with the --submit-issue flag. The issue can
+    only be saved locally, API integration will be implemented at a later stage.
+  * Add support for CD-ROM images for non CD32/CDTV Amiga models
+  * Remove website search from sidebar and merge it with the main search entry
+  * Display a warning message if the installed Nvidia driver is too old
+  * Fix GOG games not being installable without being connected to GOG
+  * Improve performance of log handling
+  * Remove winecfg if Proton is used
+  * Use discrete graphics by default with compatible systems
+  * Increase game icon size from 32x32 to 128x128
+  * Various fixes
+
+ -- Mathieu Comandon <strycore@gmail.com>  Wed, 20 Mar 2019 00:24:27 -0700
+
+lutris (0.5.0.1ubuntu1) cosmic; urgency=medium
+
+  * Bullshit my way out of Gtk+ fuckery (Closes #1697)
+  * Initialize playtime attribute when invalid playtime found (Closes #1698)
+  * Strip equal signs from envvars (Closes #1699)
+  * If the Fedora shit breaks the SUSE shit, I just delete it, OK? (Closes #1700)
+  * Add application attribute on GenericPanel (Closes #1702)
+  * Avoid crashing on weird GPU configs (Closes #1706)
+  * Remove get_config_id (Closes #1708)
+
+ -- Mathieu Comandon <strycore@gmail.com>  Sun, 03 Feb 2019 00:21:32 -0800
+
+lutris (0.5.0) cosmic; urgency=medium
+
+  * Modernize the Gtk UI, thanks to the improvements made by @TingPing
+  * Add GOG support, allowing users to sign-in their account, import games and
+    download game files automatically during install.
+  * Add finer game import options, allowing imports from different 3rd party
+    such as Steam, GOG and locally installed games.
+  * Re-architecture the process monitor. This fixes issues with games exiting
+    prematurely. Many thanks to @AaronOpfer for his patches!
+  * Multiple games can now be launched at the same time without losing control
+    over the first game.
+  * Game information and actions are now displayed in a panel on the right side.
+    Coverart fetching for the panel will be added in a future release, until then
+    cover art files can be placed in ~/.local/share/lutris/coverart/[game-identifier].jpg
+  * Games from lutris.net can be searched and installed from the client itself.
+  * New install_cab_component installer command for Media Foundation based games.
+  * Add a download cache to re-use files between installations.
+  * Print graphics drivers and GPU on startup
+  * Re-design installer selection picker.
+  * Add a button to show installer scripts before installing.
+  * Add a FPS limiter option when libstrangle is available (https://gitlab.com/torkel104/libstrangle)
+  * Re-architecturing of several parts of the application (views, linux
+    feature detection, main game class, ...)
+
+ -- Mathieu Comandon <strycore@gmail.com>  Fri, 01 Feb 2019 07:26:25 -0800
 
 lutris (0.4.23) bionic; urgency=medium
 

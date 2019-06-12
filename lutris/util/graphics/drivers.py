@@ -6,14 +6,17 @@ import os
 import re
 from lutris.util.log import logger
 
+MIN_RECOMMENDED_NVIDIA_DRIVER = 415
+
 
 def get_nvidia_driver_info():
     """Return information about NVidia drivers"""
-    with open("/proc/driver/nvidia/version") as version_file:
+    version_file_path = "/proc/driver/nvidia/version"
+    if not os.path.exists(version_file_path):
+        return
+    with open(version_file_path) as version_file:
         content = version_file.readlines()
     nvrm_version = content[0].split(': ')[1].strip().split()
-    gcc_version = content[1].split(': ')[1].strip().split()
-
     return {
         'nvrm': {
             'vendor': nvrm_version[0],
@@ -21,10 +24,6 @@ def get_nvidia_driver_info():
             'arch': nvrm_version[2],
             'version': nvrm_version[5],
             'date': ' '.join(nvrm_version[6:])
-        },
-        'gcc': {
-            'version': gcc_version[2],
-            'platform': ' '.join(gcc_version[3:]).strip('()')
         }
     }
 
@@ -64,7 +63,11 @@ def get_gpu_info(card):
     """Return information about a GPU"""
     with open("/sys/class/drm/%s/device/uevent" % card) as card_uevent:
         content = card_uevent.readlines()
-    infos = {}
+    infos = {
+        "DRIVER": "",
+        "PCI_ID": "",
+        "PCI_SUBSYS_ID": ""
+    }
     for line in content:
         key, value = line.split("=", 1)
         infos[key] = value.strip()
@@ -93,3 +96,15 @@ def check_driver():
         logger.info(
             "GPU: {PCI_ID} {PCI_SUBSYS_ID} using {DRIVER} driver".format(**get_gpu_info(card))
         )
+
+
+def is_outdated():
+    if not is_nvidia():
+        return False
+    driver_info = get_nvidia_driver_info()
+    driver_version = driver_info["nvrm"]["version"]
+    if not driver_version:
+        logger.error("Failed to get Nvidia version")
+        return True
+    major_version = int(driver_version.split(".")[0])
+    return major_version < MIN_RECOMMENDED_NVIDIA_DRIVER

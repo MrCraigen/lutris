@@ -1,12 +1,13 @@
 """Side panel when no game is selected"""
 import json
-from gi.repository import Gtk, Gdk, Gio, Pango, GLib, GObject
+from gi.repository import Gtk, Gdk, Gio, Pango, GObject
 from lutris import api
 from lutris.game import Game
 from lutris.util import system
 from lutris.gui.widgets.utils import (
     get_pixbuf_for_panel,
     get_pixbuf_for_game,
+    get_pixbuf,
     get_main_window,
     open_uri,
     get_link_button,
@@ -21,7 +22,7 @@ LINKS = {
     ),
     "donate": "https://lutris.net/donate",
     "forums": "https://forums.lutris.net/",
-    "discord": "https://discord.gg/C3uJjRD",
+    "discord": "https://discord.gg/Pnt5CuY",
     "irc": "irc://irc.freenode.org:6667/lutris",
 }
 
@@ -31,12 +32,12 @@ class GenericPanel(Gtk.Fixed):
 
     __gtype_name__ = "LutrisPanel"
     __gsignals__ = {
-        "game-searched": (GObject.SIGNAL_RUN_FIRST, None, (str, )),
         "running-game-selected": (GObject.SIGNAL_RUN_FIRST, None, (Game, ))
     }
 
-    def __init__(self):
+    def __init__(self, application=None):
         super().__init__(visible=True)
+        self.application = application
         self.set_size_request(320, -1)
         self.get_style_context().add_class("game-panel")
         self.set_background()
@@ -55,8 +56,8 @@ class GenericPanel(Gtk.Fixed):
         style.add_class(Gtk.STYLE_CLASS_VIEW)
         bg_provider = Gtk.CssProvider()
         bg_provider.load_from_data(
-            b'.game-scrolled { background-image: url("%s"); '
-            b"background-repeat: no-repeat; }" % bg_path.encode("utf-8")
+            ('.game-scrolled { background-image: url("%s"); '
+             "background-repeat: no-repeat; }" % bg_path).encode("utf-8")
         )
         Gtk.StyleContext.add_provider_for_screen(
             Gdk.Screen.get_default(),
@@ -66,19 +67,17 @@ class GenericPanel(Gtk.Fixed):
 
     def place_content(self):
         """Places widgets in the side panel"""
-        # self.put(self.get_preferences_button(), 272, 16)
         self.put(self.get_preferences_button(), 12, 12)
         self.put(self.get_user_info_box(), 48, 16)
 
-        self.put(self.get_lutris_links(), 12, 92)
+        self.put(self.get_lutris_links(), 40, 80)
 
         application = Gio.Application.get_default()
-        games = application.running_games
-        if games:
+        if application.running_games.get_n_items():
             running_label = Gtk.Label(visible=True)
             running_label.set_markup("<b>Playing:</b>")
             self.put(running_label, 12, 355)
-            self.put(self.get_running_games(games), 12, 377)
+            self.put(self.get_running_games(), 12, 377)
 
     def get_preferences_button(self):
         preferences_button = Gtk.Button.new_from_icon_name(
@@ -118,8 +117,11 @@ class GenericPanel(Gtk.Fixed):
             return user_box
         if system.path_exists(api.USER_ICON_FILE_PATH):
             user_icon = Gtk.Image(visible=True)
-            user_icon.set_from_file(api.USER_ICON_FILE_PATH)
-            user_box.pack_end(user_icon, False, False, 0)
+            user_icon.set_from_pixbuf(get_pixbuf(api.USER_ICON_FILE_PATH, (56, 56)))
+            icon_align = Gtk.Alignment(visible=True)
+            icon_align.set(1, 0, 0, 0)
+            icon_align.add(user_icon)
+            user_box.pack_end(icon_align, False, False, 0)
         with open(api.USER_INFO_FILE_PATH) as user_info_file:
             user_info = json.load(user_info_file)
         user_info_box = Gtk.VBox(spacing=6, visible=True)
@@ -150,32 +152,15 @@ class GenericPanel(Gtk.Fixed):
 
     def get_lutris_links(self):
         box = Gtk.VBox(spacing=6, visible=True)
-        floss_button = get_link_button("Browse Open Source games")
-        floss_button.connect("clicked", lambda *x: open_uri(LINKS["floss"]))
-        box.add(floss_button)
 
-        f2p_button = get_link_button("Browse Free to Play games")
-        f2p_button.connect("clicked", lambda *x: open_uri(LINKS["f2p"]))
-        box.add(f2p_button)
-
-        donate_button = get_link_button("Support the project")
+        donate_button = get_link_button("Support Lutris!")
         donate_button.connect("clicked", lambda *x: open_uri(LINKS["donate"]))
         box.add(donate_button)
-
-        search_label = Gtk.Label(visible=True)
-        search_label.set_markup("<b>Search games on Lutris.net:</b>")
-        search_label.set_alignment(0, 0.5)
-        search_label.set_margin_top(12)
-        box.add(search_label)
-
-        search_entry = Gtk.Entry(visible=True)
-        search_entry.connect("changed", self.on_search_entry_changed)
-        box.add(search_entry)
 
         help_label = Gtk.Label(visible=True)
         help_label.set_markup("<b>Help:</b>")
         help_label.set_alignment(0, 0.5)
-        help_label.set_margin_top(12)
+        help_label.set_margin_top(136)
         box.add(help_label)
 
         help_box = Gtk.Box(spacing=6, visible=True)
@@ -194,9 +179,9 @@ class GenericPanel(Gtk.Fixed):
         box.add(help_box)
         return box
 
-    def get_running_games(self, games):
+    def get_running_games(self):
         listbox = Gtk.ListBox(visible=True)
-        listbox.bind_model(games, self.create_list_widget)
+        listbox.bind_model(self.application.running_games, self.create_list_widget)
         listbox.connect('row-selected', self.on_running_game_select)
         listbox.show()
         return listbox
@@ -208,16 +193,3 @@ class GenericPanel(Gtk.Fixed):
         else:
             game = row.get_children()[0].game
         self.emit("running-game-selected", game)
-
-    def on_search_entry_changed(self, entry):
-        if self.timer_id:
-            GLib.source_remove(self.timer_id)
-        self.timer_id = GLib.timeout_add(
-            750, self.search_games, entry.get_text().lower().strip()
-        )
-
-    def search_games(self, value):
-        self.emit("game-searched", value)
-        GLib.source_remove(self.timer_id)
-        self.timer_id = None
-        return False

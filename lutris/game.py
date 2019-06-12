@@ -18,7 +18,8 @@ from lutris.config import LutrisConfig
 from lutris.command import MonitoredCommand
 from lutris.gui import dialogs
 from lutris.util.timer import Timer
-
+from lutris.discord import DiscordPresence
+from lutris.settings import DEFAULT_DISCORD_CLIENT_ID
 
 HEARTBEAT_DELAY = 2000
 
@@ -38,7 +39,7 @@ class Game(GObject.Object):
         "game-started": (GObject.SIGNAL_RUN_FIRST, None, ()),
         "game-stop": (GObject.SIGNAL_RUN_FIRST, None, ()),
         "game-stopped": (GObject.SIGNAL_RUN_FIRST, None, (int,)),
-        "game-removed": (GObject.SIGNAL_RUN_FIRST, None, (int,)),
+        "game-removed": (GObject.SIGNAL_RUN_FIRST, None, ()),
         "game-updated": (GObject.SIGNAL_RUN_FIRST, None, ()),
     }
 
@@ -55,18 +56,20 @@ class Game(GObject.Object):
         self.directory = game_data.get("directory") or ""
         self.name = game_data.get("name") or ""
 
-        self.is_installed = bool(game_data.get("installed"))
+        self.game_config_id = game_data.get("configpath") or ""
+        self.is_installed = bool(game_data.get("installed") and self.game_config_id)
         self.platform = game_data.get("platform") or ""
         self.year = game_data.get("year") or ""
         self.lastplayed = game_data.get("lastplayed") or 0
-        self.game_config_id = game_data.get("configpath") or ""
         self.steamid = game_data.get("steamid") or ""
         self.has_custom_banner = bool(game_data.get("has_custom_banner"))
         self.has_custom_icon = bool(game_data.get("has_custom_icon"))
+        self.discord_presence = DiscordPresence()
         try:
             self.playtime = float(game_data.get("playtime") or 0.0)
         except ValueError:
             logger.error("Invalid playtime value %s", game_data.get("playtime"))
+            self.playtime = 0.0
 
         if self.game_config_id:
             self.load_config()
@@ -82,10 +85,18 @@ class Game(GObject.Object):
         self.compositor_disabled = False
         self.stop_compositor = self.start_compositor = ""
         self.original_outputs = None
-        self.log_buffer = Gtk.TextBuffer()
-        self.log_buffer.create_tag("warning", foreground="red")
-
+        self._log_buffer = None
         self.timer = Timer()
+
+    @property
+    def log_buffer(self):
+        if self._log_buffer is None:
+            self._log_buffer = Gtk.TextBuffer()
+            self._log_buffer.create_tag("warning", foreground="red")
+            if self.game_thread:
+                self.game_thread.set_log_buffer(self._log_buffer)
+                self._log_buffer.set_text(self.game_thread.stdout)
+        return self._log_buffer
 
     def __repr__(self):
         return self.__unicode__()
@@ -150,6 +161,12 @@ class Game(GObject.Object):
             runner_slug=self.runner_name, game_config_id=self.game_config_id
         )
         self.runner = self._get_runner()
+        if self.discord_presence.available:
+            self.discord_presence.client_id = self.config.system_config.get("discord_client_id") or DEFAULT_DISCORD_CLIENT_ID
+            self.discord_presence.game_name = self.config.system_config.get("discord_custom_game_name") or self.name
+            self.discord_presence.show_runner = self.config.system_config.get("discord_show_runner", True)
+            self.discord_presence.runner_name = self.config.system_config.get("discord_custom_runner_name") or self.runner_name
+            self.discord_presence.rpc_enabled = self.config.system_config.get("discord_rpc_enabled", True)
 
     def set_desktop_compositing(self, enable):
         """Enables or disables compositing"""
@@ -181,12 +198,14 @@ class Game(GObject.Object):
         if self.config:
             self.config.remove()
         xdgshortcuts.remove_launcher(self.slug, self.id, desktop=True, menu=True)
-        self.emit("game-removed", self.id)
+        self.is_installed = False
+        self.emit("game-removed")
         return from_library
 
     def set_platform_from_runner(self):
         """Set the game's platform from the runner"""
         if not self.runner:
+            logger.warning("Game has no runner, can't set platform")
             return
         self.platform = self.runner.get_platform()
         if not self.platform:
@@ -201,6 +220,7 @@ class Game(GObject.Object):
         logger.debug("Saving %s", self)
         if not metadata_only:
             self.config.save()
+        self.set_platform_from_runner()
         self.id = pga.add_or_update(
             name=self.name,
             runner=self.runner_name,
@@ -215,6 +235,7 @@ class Game(GObject.Object):
             id=self.id,
             playtime=self.playtime,
         )
+        self.emit("game-updated")
 
     def prelaunch(self):
         """Verify that the current game can be launched."""
@@ -352,6 +373,8 @@ class Game(GObject.Object):
             launch_arguments.insert(0, "virtualgl")
             launch_arguments.insert(0, "-b")
             launch_arguments.insert(0, "optirun")
+        elif optimus == "pvkrun" and system.find_executable("pvkrun"):
+            launch_arguments.insert(0, "pvkrun")
 
         xephyr = system_config.get("xephyr") or "off"
         if xephyr != "off":
@@ -392,6 +415,10 @@ class Game(GObject.Object):
         pulse_latency = system_config.get("pulse_latency")
         if pulse_latency:
             env["PULSE_LATENCY_MSEC"] = "60"
+
+        vk_icd = system_config.get("vk_icd")
+        if vk_icd and vk_icd != "off" and system.path_exists(vk_icd):
+            env["VK_ICD_FILENAMES"] = vk_icd
 
         fps_limit = system_config.get("fps_limit") or ""
         if fps_limit:
@@ -494,7 +521,7 @@ class Game(GObject.Object):
             runner=self.runner,
             env=self.game_runtime_config["env"],
             term=self.game_runtime_config["terminal"],
-            log_buffer=self.log_buffer,
+            log_buffer=self._log_buffer,
             include_processes=self.game_runtime_config["include_processes"],
             exclude_processes=self.game_runtime_config["exclude_processes"],
         )
@@ -529,10 +556,19 @@ class Game(GObject.Object):
         self.xboxdrv_thread.start()
 
     @staticmethod
-    def xboxdrv_stop():
-        os.system("pkexec xboxdrvctl --shutdown")
+    def reload_xpad():
+        """Reloads the xpads module.
+        The path is hardcoded because this script is allowed to be executed as
+        root with a PolicyKit rule put in place by the packages.
+        Note to packagers: If you don't intend to create a PolicyKit rule for
+        this script then don't package it as calling it will fail.
+        """
         if system.path_exists("/usr/share/lutris/bin/resetxpad"):
             os.system("pkexec /usr/share/lutris/bin/resetxpad")
+
+    def xboxdrv_stop(self):
+        os.system("pkexec xboxdrvctl --shutdown")
+        self.reload_xpad()
 
     def prelaunch_beat(self):
         """Watch the prelaunch command"""
@@ -557,6 +593,10 @@ class Game(GObject.Object):
             logger.debug("Game thread stopped")
             self.on_game_quit()
             return False
+
+        if self.discord_presence.available:
+            self.discord_presence.update_discord_rich_presence()
+
         return True
 
     def stop(self):
@@ -595,6 +635,9 @@ class Game(GObject.Object):
                 cwd=self.directory,
             )
             postexit_thread.start()
+
+        if self.discord_presence.available:
+            self.discord_presence.clear_discord_rich_presence()
 
         quit_time = time.strftime("%a, %d %b %Y %H:%M:%S", time.localtime())
         logger.debug("%s stopped at %s", self.name, quit_time)

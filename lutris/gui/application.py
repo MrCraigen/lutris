@@ -34,6 +34,7 @@ from lutris import pga
 from lutris.game import Game
 from lutris import settings
 from lutris.gui.dialogs import ErrorDialog, InstallOrPlayDialog
+from lutris.gui.dialogs.issue import IssueReportWindow
 from lutris.gui.installerwindow import InstallerWindow
 from lutris.migrations import migrate
 from lutris.command import exec_command
@@ -43,12 +44,11 @@ from lutris.util import datapath
 from lutris.util import log
 from lutris.util.jobs import AsyncCall
 from lutris.util.log import logger
-from lutris.util.resources import parse_installer_url
-from lutris.startup import run_all_checks
+from lutris.api import parse_installer_url
+from lutris.startup import init_lutris, run_all_checks
 from lutris.util.wine.dxvk import init_dxvk_versions
 
 from .lutriswindow import LutrisWindow
-from lutris.gui.widgets.tray import LutrisTray
 
 
 class Application(Gtk.Application):
@@ -57,19 +57,16 @@ class Application(Gtk.Application):
             application_id="net.lutris.Lutris",
             flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE,
         )
-        logger.info("Running Lutris %s", settings.VERSION)
+        init_lutris()
         gettext.bindtextdomain("lutris", "/usr/share/locale")
         gettext.textdomain("lutris")
-
-        run_all_checks()
-        migrate()
-        AsyncCall(init_dxvk_versions)
 
         GLib.set_application_name(_("Lutris"))
         self.running_games = Gio.ListStore.new(Game)
         self.window = None
         self.tray = None
         self.css_provider = Gtk.CssProvider.new()
+        self.run_in_background = False
 
         if os.geteuid() == 0:
             ErrorDialog(
@@ -87,7 +84,7 @@ class Application(Gtk.Application):
             self.add_arguments()
         else:
             ErrorDialog(
-                "Your Linux distribution is too old, Lutris won't function properly"
+                "Your Linux distribution is too old. Lutris won't function properly."
             )
 
     def add_arguments(self):
@@ -145,6 +142,10 @@ class Application(Gtk.Application):
             _("Reinstall game"), None,
         )
         self.add_main_option(
+            "submit-issue", 0, GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
+            _("Submit an issue"), None
+        )
+        self.add_main_option(
             GLib.OPTION_REMAINING, 0, GLib.OptionFlags.NONE, GLib.OptionArg.STRING_ARRAY,
             _("uri to open"), "URI",
         )
@@ -167,14 +168,6 @@ class Application(Gtk.Application):
         menubar = builder.get_object("menubar")
         self.set_menubar(menubar)
 
-    def set_tray_icon(self):
-        """Creates or destroys a tray icon for the application"""
-        active = settings.read_setting("show_tray_icon", default="false") == "true"
-        if active and not self.tray:
-            self.tray = LutrisTray(application=self)
-        if self.tray:
-            self.tray.set_visible(active)
-
     def do_activate(self):
         if not self.window:
             self.window = LutrisWindow(application=self)
@@ -182,7 +175,12 @@ class Application(Gtk.Application):
             Gtk.StyleContext.add_provider_for_screen(
                 screen, self.css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
             )
-        self.window.present()
+        if not self.run_in_background:
+            self.window.present()
+        else:
+            # Reset run in background to False. Future calls will set it
+            # accordingly
+            self.run_in_background = False
 
     @staticmethod
     def _print(command_line, string):
@@ -224,6 +222,11 @@ class Application(Gtk.Application):
             logger.setLevel(logging.NOTSET)
             return 0
 
+        logger.info("Running Lutris %s", settings.VERSION)
+        migrate()
+        run_all_checks()
+        AsyncCall(init_dxvk_versions)
+
         # List game
         if options.contains("list-games"):
             game_list = pga.get_games()
@@ -249,6 +252,10 @@ class Application(Gtk.Application):
             self.execute_command(command)
             return 0
 
+        elif options.contains("submit-issue"):
+            IssueReportWindow(application=self)
+            return 0
+
         try:
             url = options.lookup_value(GLib.OPTION_REMAINING)
             installer_info = self.get_lutris_action(url)
@@ -268,24 +275,22 @@ class Application(Gtk.Application):
                 self._print(command_line, "No such file: %s" % installer_file)
                 return 1
 
-        # Graphical commands
-        self.activate()
-        self.set_tray_icon()
-
         db_game = None
         if game_slug:
             if action == "rungameid":
                 # Force db_game to use game id
+                self.run_in_background = True
                 db_game = pga.get_game_by_field(game_slug, "id")
             elif action == "rungame":
                 # Force db_game to use game slug
+                self.run_in_background = True
                 db_game = pga.get_game_by_field(game_slug, "slug")
             elif action == "install":
                 # Installers can use game or installer slugs
+                self.run_in_background = True
                 db_game = pga.get_game_by_field(
                     game_slug, "slug"
                 ) or pga.get_game_by_field(game_slug, "installer_slug")
-
             else:
                 # Dazed and confused, try anything that might works
                 db_game = (
@@ -293,6 +298,9 @@ class Application(Gtk.Application):
                     or pga.get_game_by_field(game_slug, "slug")
                     or pga.get_game_by_field(game_slug, "installer_slug")
                 )
+
+        # Graphical commands
+        self.activate()
 
         if not action:
             if db_game and db_game["installed"]:
@@ -320,25 +328,18 @@ class Application(Gtk.Application):
         elif action in ("rungame", "rungameid"):
             if not db_game or not db_game["id"]:
                 logger.warning("No game found in library")
+                if not self.window.is_visible():
+                    self.do_shutdown()
                 return 0
-
-            logger.info("Launching %s", db_game["name"])
-
-            # If game is not installed, show the GUI before running. Otherwise leave the GUI closed.
-            if not db_game["installed"]:
-                self.window.present()
-            self.launch(db_game["id"])
-
-        else:
-            self.window.present()
-
+            self.launch(Game(db_game["id"]))
         return 0
 
     def launch(self, game):
         """Launch a Lutris game"""
-        logger.debug("Adding game %s (%s) to running games", game, id(game))
+        logger.debug("Launching %s (%s)", game, id(game))
         self.running_games.append(game)
         game.connect("game-stop", self.on_game_stop)
+        game.load_config()  # Reload the config before launching it.
         game.play()
 
     def get_game_by_id(self, game_id):
@@ -368,7 +369,7 @@ class Application(Gtk.Application):
             url = url.get_strv()
 
         if url:
-            url = url[0]  # TODO: Support multiple
+            url = url[0]
             installer_info = parse_installer_url(url)
             if installer_info is False:
                 raise ValueError

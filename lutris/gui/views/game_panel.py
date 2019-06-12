@@ -1,6 +1,7 @@
 """Game panel"""
 from datetime import datetime
 from gi.repository import Gtk, Pango, GObject
+from lutris import runners
 from lutris.gui.widgets.utils import get_pixbuf_for_game, get_link_button
 from lutris.util.strings import gtk_safe
 from lutris.gui.views.generic_panel import GenericPanel
@@ -95,15 +96,21 @@ class GamePanel(GenericPanel):
         last_played_label.set_markup("Last played: <b>%s</b>" % lastplayed.strftime("%x"))
         return last_played_label
 
+    def get_runner_entries(self, game):
+        try:
+            runner = runners.import_runner(game.runner_name)(game.config)
+        except runners.InvalidRunner:
+            return None
+        return runner.context_menu_entries
+
     def get_buttons(self):
         displayed = self.game_actions.get_displayed_entries()
-        disabled_entries = self.game_actions.get_disabled_entries()
         icon_map = {
             # "stop": "media-playback-stop-symbolic",
             # "play": "media-playback-start-symbolic",
             "configure": "preferences-system-symbolic",
             "browse": "system-file-manager-symbolic",
-            "show_logs": "utilities-system-monitor-symbolic",
+            "show_logs": "utilities-terminal-symbolic",
             "remove": "user-trash-symbolic",
         }
         buttons = {}
@@ -121,15 +128,25 @@ class GamePanel(GenericPanel):
                     button.set_size_request(146, 42)
                 else:
                     button = get_link_button(label)
-            button.connect("clicked", callback)
 
             if displayed.get(action_id):
                 button.show()
             else:
                 button.hide()
-            if disabled_entries.get(action_id):
-                button.set_sensitive(False)
             buttons[action_id] = button
+
+            if action_id in ('desktop-shortcut', 'rm-desktop-shortcut', 'menu-shortcut', 'rm-menu-shortcut'):
+                button.connect("clicked", self.on_shortcut_edited, action_id)
+
+            button.connect("clicked", callback)
+
+        if self.game.runner_name and self.game.is_installed:
+            for entry in self.get_runner_entries(self.game):
+                name, label, callback = entry
+                button = get_link_button(label)
+                button.show()
+                button.connect("clicked", callback)
+                buttons[name] = button
         return buttons
 
     def place_buttons(self, base_height):
@@ -139,6 +156,8 @@ class GamePanel(GenericPanel):
         icon_start = 84
         icons_y_offset = 60
         buttons_x_offset = 28
+        extra_button_start = 520  # Y position for runner actions
+        extra_button_index = 0
         for action_id, button in self.buttons.items():
             position = None
             if action_id in ("play", "stop", "install"):
@@ -153,14 +172,13 @@ class GamePanel(GenericPanel):
             if action_id == "show_logs":
                 position = (icon_start + icon_offset * 2 + icon_width * 2,
                             base_height + icons_y_offset)
-            if action_id in ("remove"):
+            if action_id == "remove":
                 position = (icon_start + icon_offset * 3 + icon_width * 3,
                             base_height + icons_y_offset)
-            if action_id == "execute-script":
-                position = (50,
-                            base_height + 82)
 
             current_y = base_height + 150
+            if action_id == "execute-script":
+                position = (buttons_x_offset, current_y)
             if action_id in ("add", "install_more"):
                 position = (buttons_x_offset, current_y + 40)
             if action_id == "view":
@@ -170,8 +188,18 @@ class GamePanel(GenericPanel):
             if action_id in ("menu-shortcut", "rm-menu-shortcut"):
                 position = (buttons_x_offset, current_y + 160)
 
-            if position:
-                self.put(button, position[0], position[1])
+            if not position:
+                position = (buttons_x_offset, extra_button_start + extra_button_index * 40)
+                extra_button_index += 1
+
+            self.put(button, position[0], position[1])
+
+    def on_shortcut_edited(self, widget, action_id):
+        self.buttons[action_id].hide()
+        if 'rm' == action_id[0:2]:
+            self.buttons[action_id[3:]].show()
+        else:
+            self.buttons['rm-' + action_id].show()
 
     def on_game_start(self, widget):
         self.buttons["play"].set_label("Launching...")
@@ -182,13 +210,11 @@ class GamePanel(GenericPanel):
         self.buttons["play"].hide()
         self.buttons["play"].set_label("Play")
         self.buttons["play"].set_sensitive(True)
-        self.buttons["show_logs"].set_sensitive(True)
 
     def on_game_stop(self, widget, game_id=None):
         for child in self.get_children():
             child.destroy()
         self.place_content()
-        self.buttons["show_logs"].set_sensitive(True)
 
     def on_close(self, _widget):
         self.emit("panel-closed")
